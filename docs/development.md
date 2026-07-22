@@ -26,3 +26,18 @@ git diff --check
 
 实服验收关注：进入 `play`、聊天收发、坐标/生命更新、死亡后单次复活、断线重连，
 以及长时间运行时 RSS 是否稳定。参考项目已有同用户名进程运行时不要并发登录。
+
+## Deployment Status (2026-07-23)
+
+Local live login passed with RSS `76.0 MiB`; both the old dashboard and the temporary light bot were
+stopped afterward. Remote deployment is pending because SSH never reaches authentication:
+
+```text
+ssh huoyuuu@107.173.39.150 -p 17999 -> connection established, banner exchange timeout
+ssh 107.173.39.150                    -> TCP connect timeout on port 22
+```
+
+When SSH recovers, deploy under the `huoyuuu` account, run `npm ci --omit=dev`, set
+`WEB_HOST=0.0.0.0`, and inspect `ss -ltn` starting at port `18000`. The server can automatically
+advance up to 100 ports when its configured port is occupied. Run it under systemd and verify
+`/api/health` plus `/api/state` before leaving it enabled.

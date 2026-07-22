@@ -18,3 +18,24 @@ chunk cache、raw chunk copies、entity map、resource catalog、Prismarine phys
 
 执行 `npm ci && npm test && npm start`，打开控制台输出的网页地址。真实服务器配置位于
 未跟踪的 `.env`。
+
+## 2026-07-23 实服验收
+
+关闭参考项目的完整 Dashboard 后，轻量 Bot 使用原有 `huoyuuu_bot` 和 Minecraft 服务器配置完成真实登录：
+
+```text
+phase=play
+world=minecraft:overworld
+health=20
+food=18
+position=116.73,121.00,-93.70
+chunksIgnored=338
+RSS=76.0 MiB
+```
+
+网页健康接口和自身状态接口均返回正常，系统聊天成功接收。验收结束后已关闭本地进程，
+避免与待部署的远端实例发生 duplicate login。
+
+远端部署暂时被 SSH 服务阻断：`107.173.39.150:17999` 可以建立 TCP，但连续 35 秒收不到
+SSH banner；`107.173.39.150:22` TCP 连接超时。两条入口均未到达用户认证阶段，因此尚未能
+检查远端端口、上传代码或创建 systemd 服务。
