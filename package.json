@@ -1,0 +1,15 @@
+{
+  "name": "minecraft-idle-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal Forge-compatible Minecraft idle bot with a tiny chat/status page",
+  "license": "AGPL-3.0-or-later",
+  "type": "commonjs",
+  "engines": { "node": ">=22.12" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "test": "node --test",
+    "check": "node --check src/light-bot.js && node --check src/server.js"
+  },
+  "dependencies": { "minecraft-protocol": "1.66.2" }
+}
