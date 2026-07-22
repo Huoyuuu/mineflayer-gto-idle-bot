@@ -1,8 +1,10 @@
-# Minecraft Idle Bot
+# Mineflayer GTO Idle Bot
 
 一个面向 Minecraft 1.20.1 Forge 服务器的极简挂机客户端。它直接使用
 `minecraft-protocol`，不加载 Mineflayer 世界插件，不解析或缓存区块、方块、实体、
 背包、物理和资源包。网页仅包含 Bot 自身状态与聊天。
+
+![Idle Bot 状态与聊天界面](assets/screenshot.png)
 
 ## 启动
 
@@ -18,6 +20,18 @@ npm start
 
 打开终端打印的地址。若 `WEB_PORT` 被占用，会自动使用后续空闲端口。
 
+## Docker
+
+```powershell
+Copy-Item .env.example .env
+# 编辑 .env 中的连接信息
+docker compose up -d --build
+docker compose ps
+```
+
+Compose 默认只发布到宿主机 `127.0.0.1`。需要通过公网访问时，应使用可信反向代理；
+聊天接口本身没有登录鉴权。
+
 ## 资源边界
 
 服务器发来的区块包仍必须经过底层协议解压和反序列化，但本项目不注册世界处理器，
@@ -28,3 +42,5 @@ npm start
 
 真实连接信息只放在被 Git 忽略的 `.env` 中。默认网页只监听 `127.0.0.1`；聊天接口
 没有登录鉴权，不要直接暴露到公网。
+
+部署代理可直接阅读 [AGENT.md](AGENT.md)。

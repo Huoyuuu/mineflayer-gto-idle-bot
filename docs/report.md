@@ -7,6 +7,7 @@
 - 不导入或维护区块、方块、实体、玩家列表、背包、物理、资源包和 3D 场景。
 - 页面只有自身状态和聊天，服务端使用 Node 内置 HTTP + SSE，不引入 WebSocket 服务端框架。
 - 聊天最多保留 100 条；区块包只计数后丢弃，不复制、不缓存、不二次解码。
+- README 已加入实机页面截图；仓库包含 Docker Compose、健康检查、资源限制、CI 和 AGENT 部署指南。
 
 ## 性能设计
 
@@ -21,7 +22,7 @@ chunk cache、raw chunk copies、entity map、resource catalog、Prismarine phys
 
 ## 2026-07-23 实服验收
 
-关闭参考项目的完整 Dashboard 后，轻量 Bot 使用原有 `huoyuuu_bot` 和 Minecraft 服务器配置完成真实登录：
+关闭参考项目的完整 Dashboard 后，轻量 Bot 使用测试账号和服务器配置完成真实登录：
 
 ```text
 phase=play
@@ -36,6 +37,5 @@ RSS=76.0 MiB
 网页健康接口和自身状态接口均返回正常，系统聊天成功接收。验收结束后已关闭本地进程，
 避免与待部署的远端实例发生 duplicate login。
 
-远端部署暂时被 SSH 服务阻断：`107.173.39.150:17999` 可以建立 TCP，但连续 35 秒收不到
-SSH banner；`107.173.39.150:22` TCP 连接超时。两条入口均未到达用户认证阶段，因此尚未能
-检查远端端口、上传代码或创建 systemd 服务。
+远端最终使用独立 Node.js 22 runtime 与 user-level systemd 完成部署，服务成功进入
+`play`，健康检查正常。实际服务器地址、账号与游戏端点仅保存在未跟踪的 `.env` 中。

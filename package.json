@@ -1,5 +1,5 @@
 {
-  "name": "minecraft-idle-bot",
+  "name": "mineflayer-gto-idle-bot",
   "version": "1.0.0",
   "private": true,
   "description": "Minimal Forge-compatible Minecraft idle bot with a tiny chat/status page",

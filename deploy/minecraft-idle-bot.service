@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/huoyuuu/services/minecraft-idle-bot
-EnvironmentFile=/home/huoyuuu/services/minecraft-idle-bot/.env
+WorkingDirectory=%h/services/minecraft-idle-bot
+EnvironmentFile=%h/services/minecraft-idle-bot/.env
 Environment=NODE_OPTIONS=--max-old-space-size=96
-ExecStart=/home/huoyuuu/services/minecraft-idle-bot/.runtime/bin/node src/server.js
+ExecStart=%h/services/minecraft-idle-bot/.runtime/bin/node src/server.js
 Restart=always
 RestartSec=10
 Nice=5
