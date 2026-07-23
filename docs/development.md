@@ -53,3 +53,19 @@ Inspect behavior with:
 journalctl --user -u minecraft-idle-bot.service -f
 curl -s http://127.0.0.1:18013/api/state
 ```
+
+## Reconnect Backoff and Pull Deployment
+
+The retry schedule is `2m, 4m, 8m, 16m, 32m, 60m`. If the connection still fails after
+the 60-minute retry, the bot persists a two-hour cooldown and exits; user-level systemd
+restarts the service, and startup waits for the persisted deadline before reconnecting.
+Four repeated disconnects from already-established sessions keep the same two-hour protection.
+
+On the server, configure the tracked hook once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+After that, `git pull` invokes `.githooks/post-merge`, which runs `scripts/deploy.sh` to
+install production dependencies, refresh the user unit, and restart the service.
