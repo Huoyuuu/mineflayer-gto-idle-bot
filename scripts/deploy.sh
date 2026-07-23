@@ -6,9 +6,10 @@ cd "$root_dir"
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
-npm_bin="$root_dir/.runtime/bin/npm"
-if [[ -x "$npm_bin" ]]; then
-  "$npm_bin" ci --omit=dev
+node_bin="$root_dir/.runtime/bin/node"
+npm_cli="$root_dir/.runtime/lib/node_modules/npm/bin/npm-cli.js"
+if [[ -x "$node_bin" && -f "$npm_cli" ]]; then
+  "$node_bin" "$npm_cli" ci --omit=dev
 else
   npm ci --omit=dev
 fi
