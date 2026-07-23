@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Idle Bot</title>
+  <script src="https://cdn.tailwindcss.com"></script><script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>html,body{margin:0;background:#fafaf9;color:#292524;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}*{box-sizing:border-box}.chat{scrollbar-width:thin}.dot{width:8px;height:8px;border-radius:50%;display:inline-block}</style>
+</head>
+<body><main class="mx-auto flex min-h-screen max-w-5xl flex-col gap-4 p-4 sm:p-8">
+  <header class="flex items-center justify-between border-b border-stone-200 pb-4"><div><p class="text-xs uppercase tracking-widest text-stone-500">minimal presence</p><h1 class="text-xl font-semibold">Idle Bot</h1></div><div id="phase" class="text-sm text-stone-500"><span class="dot bg-stone-400"></span> offline</div></header>
+  <section class="grid gap-4 md:grid-cols-[240px_1fr]">
+    <aside class="border border-stone-200 bg-white p-4"><h2 class="mb-3 text-xs uppercase tracking-wider text-stone-500">bot info</h2><dl id="info" class="space-y-2 text-sm"></dl></aside>
+    <section class="flex min-h-[560px] flex-col border border-stone-200 bg-white"><div class="border-b border-stone-200 px-4 py-3 text-xs uppercase tracking-wider text-stone-500">chat</div><div id="chat" class="chat flex-1 space-y-2 overflow-y-auto p-4 text-sm"></div><form id="form" class="flex gap-2 border-t border-stone-200 p-3"><input id="message" maxlength="256" autocomplete="off" class="min-w-0 flex-1 border border-stone-300 bg-stone-50 px-3 py-2 outline-none focus:border-stone-700" placeholder="发送消息"><button class="grid h-10 w-10 shrink-0 place-items-center border border-stone-800 bg-stone-800 text-white hover:bg-stone-700" type="submit" title="发送"><i data-lucide="send" class="h-4 w-4"></i></button></form></section>
+  </section>
+</main><script>
+const $=s=>document.querySelector(s), phase=$('#phase'), info=$('#info'), chat=$('#chat'); let last=[]
+const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))
+function render(s){const online=s.connected;phase.innerHTML=`<span class="dot ${online?'bg-emerald-500':'bg-stone-400'}"></span> ${esc(s.phase)}`;info.innerHTML=[['name',s.username],['server',`${s.host}:${s.port}`],['world',s.world||'--'],['health',s.health==null?'--':`${s.health} / 20`],['food',s.food==null?'--':s.food],['position',s.position?`${s.position.x.toFixed(2)}, ${s.position.y.toFixed(2)}, ${s.position.z.toFixed(2)}`:'--'],['packets',s.packets],['uptime',`${s.uptime}s`]].map(([k,v])=>`<div class="flex justify-between gap-3"><dt class="text-stone-500">${k}</dt><dd class="text-right">${esc(v)}</dd></div>`).join('');if(JSON.stringify(last)!==JSON.stringify(s.chat)){chat.innerHTML=s.chat.map(m=>`<div class="leading-6"><span class="text-stone-400">${new Date(m.at).toLocaleTimeString()}</span> <b class="font-medium">${esc(m.sender)}</b> <span>${esc(m.text)}</span></div>`).join('');chat.scrollTop=chat.scrollHeight;last=s.chat}}
+fetch('/api/state').then(r=>r.json()).then(render);const events=new EventSource('/events');events.addEventListener('state',e=>render(JSON.parse(e.data)));lucide.createIcons();
+$('#form').onsubmit=async e=>{e.preventDefault();const input=$('#message'),message=input.value.trim();if(!message)return;const r=await fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message})});if(r.ok)input.value='';else alert((await r.json()).error)}
+</script></body></html>

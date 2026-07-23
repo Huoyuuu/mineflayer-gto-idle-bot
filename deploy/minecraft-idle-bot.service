@@ -1,0 +1,21 @@
+[Unit]
+Description=Minimal Minecraft idle bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/huoyuuu/services/minecraft-idle-bot
+EnvironmentFile=/home/huoyuuu/services/minecraft-idle-bot/.env
+Environment=NODE_OPTIONS=--max-old-space-size=96
+ExecStart=/home/huoyuuu/services/minecraft-idle-bot/.runtime/bin/node src/server.js
+Restart=always
+RestartSec=10
+Nice=5
+MemoryHigh=128M
+MemoryMax=160M
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
