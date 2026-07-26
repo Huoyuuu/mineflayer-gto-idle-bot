@@ -5,17 +5,21 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { config } = require('./config')
 const { LightBot } = require('./light-bot')
+const { ChatStore } = require('./chat-store')
 
 const publicDir = path.resolve(__dirname, '../public')
 const bot = new LightBot()
+const chatStore = new ChatStore(path.resolve(__dirname, '../.minecraft-idle-bot.chat.jsonl'))
 const clients = new Set()
 const json = (res, status, value) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(value)) }
-const broadcast = () => { const data = `event: state\ndata: ${JSON.stringify(bot.snapshot())}\n\n`; for (const res of clients) res.write(data) }
-bot.on('state', broadcast)
+const broadcast = (event, value) => { const data = `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`; for (const res of clients) res.write(data) }
+bot.on('state', state => broadcast('state', state))
+bot.on('chat', message => { chatStore.append(message); broadcast('chat', message) })
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
   if (req.method === 'GET' && url.pathname === '/api/state') return json(res, 200, bot.snapshot())
+  if (req.method === 'GET' && url.pathname === '/api/chat') return json(res, 200, chatStore.page({ before: url.searchParams.get('before'), limit: url.searchParams.get('limit') }))
   if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, phase: bot.state.phase })
   if (req.method === 'GET' && url.pathname === '/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' }); res.write(`event: state\ndata: ${JSON.stringify(bot.snapshot())}\n\n`); clients.add(res); req.on('close', () => clients.delete(res)); return

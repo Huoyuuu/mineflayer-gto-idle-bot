@@ -6,6 +6,7 @@ const net = require('node:net')
 const EventEmitter = require('node:events')
 const mc = require('minecraft-protocol')
 const { config } = require('./config')
+const ChatMessage = require('prismarine-chat')(config.mcVersion)
 const { installForge3 } = require('./forge3')
 
 const RECONNECT_DELAYS = [
@@ -16,11 +17,22 @@ const RECONNECT_DELAYS = [
   32 * 60 * 1000,
   60 * 60 * 1000
 ]
-const CHAT_LIMIT = 100
 const MAX_CONSECUTIVE_RECONNECTS = 3
 const COOLDOWN_MS = 2 * 60 * 60 * 1000
 const STABLE_RESET_MS = 10 * 60 * 1000
+const LIVENESS_TIMEOUT_MS = 90 * 1000
 const COOLDOWN_FILE = path.resolve(__dirname, '../.minecraft-idle-bot.cooldown')
+const CUSTOM_PACKETS = {
+  '1.20': {
+    play: {
+      toClient: {
+        types: {
+          packet_declare_recipes: ['container', [{ name: 'data', type: 'restBuffer' }]]
+        }
+      }
+    }
+  }
+}
 
 function reconnectDelay (attempt) {
   const index = Math.min(Math.max(0, attempt), RECONNECT_DELAYS.length - 1)
@@ -29,21 +41,13 @@ function reconnectDelay (attempt) {
 
 function textOf (component) {
   if (component == null) return ''
-  if (typeof component !== 'string') return String(component)
   try {
-    const value = JSON.parse(component)
-    const parts = []
-    const visit = item => {
-      if (item == null) return
-      if (typeof item === 'string') return parts.push(item)
-      if (typeof item !== 'object') return
-      if (typeof item.text === 'string') parts.push(item.text)
-      if (Array.isArray(item.extra)) item.extra.forEach(visit)
-      if (Array.isArray(item.with)) item.with.forEach(visit)
+    let value = component
+    if (typeof component === 'string') {
+      try { value = JSON.parse(component) } catch { return new ChatMessage(component).toString() }
     }
-    visit(value)
-    return parts.join('') || component
-  } catch { return component }
+    return new ChatMessage(value).toString()
+  } catch { return typeof component === 'string' ? component : String(component) }
 }
 
 function mergePosition (old, packet) {
@@ -66,10 +70,12 @@ class LightBot extends EventEmitter {
     this.timer = null
     this.loginTimer = null
     this.stableTimer = null
+    this.livenessTimer = null
     this.cooldownTimer = null
     this.cooldownUntil = null
     this.consecutiveReconnects = 0
     this.attempt = 0
+    this.stopping = false
     this.respawnRequested = false
     this.startedAt = Date.now()
     this.state = {
@@ -78,12 +84,14 @@ class LightBot extends EventEmitter {
       entityId: null, world: null, gameMode: null, health: null, food: null,
       position: null, packets: 0, chunksIgnored: 0, reconnects: 0,
       consecutiveReconnects: 0, cooldownUntil: null,
-      lastPacketAt: null, lastError: null, chat: []
+      nextReconnectAt: null, reconnectDelayMs: null, reconnectAttempt: 0,
+      lastPacketAt: null, lastError: null
     }
   }
 
   start () {
     if (this.client || this.cooldownTimer) return this
+    this.stopping = false
     const persistedUntil = this.readCooldown()
     if (persistedUntil > Date.now()) {
       this.cooldownUntil = persistedUntil
@@ -108,9 +116,11 @@ class LightBot extends EventEmitter {
     return this
   }
   stop () {
+    this.stopping = true
+    this.generation = Symbol('stopped')
     clearTimeout(this.timer); clearTimeout(this.loginTimer)
-    clearTimeout(this.stableTimer); clearTimeout(this.cooldownTimer)
-    this.timer = this.loginTimer = this.stableTimer = this.cooldownTimer = null
+    clearTimeout(this.stableTimer); clearTimeout(this.cooldownTimer); clearInterval(this.livenessTimer)
+    this.timer = this.loginTimer = this.stableTimer = this.cooldownTimer = this.livenessTimer = null
     this.client?.end('stopped'); this.socket?.destroy()
     this.client = this.socket = null
     this.state.phase = 'offline'; this.state.connected = false
@@ -126,8 +136,8 @@ class LightBot extends EventEmitter {
     try { fs.unlinkSync(COOLDOWN_FILE) } catch (error) { if (error.code !== 'ENOENT') console.error(`[bot] cannot clear cooldown: ${error.message}`) }
   }
   enterCooldown (reason, trigger = `${MAX_CONSECUTIVE_RECONNECTS + 1} consecutive reconnects reached`) {
-    clearTimeout(this.timer); clearTimeout(this.loginTimer); clearTimeout(this.stableTimer)
-    this.timer = this.loginTimer = this.stableTimer = null
+    clearTimeout(this.timer); clearTimeout(this.loginTimer); clearTimeout(this.stableTimer); clearInterval(this.livenessTimer)
+    this.timer = this.loginTimer = this.stableTimer = this.livenessTimer = null
     const until = Date.now() + COOLDOWN_MS
     try { fs.writeFileSync(COOLDOWN_FILE, `${until}\n`, { mode: 0o600 }) } catch (error) { console.error(`[bot] cannot persist cooldown: ${error.message}`) }
     this.cooldownUntil = until
@@ -140,28 +150,30 @@ class LightBot extends EventEmitter {
   }
   snapshot () {
     return { ...this.state, position: this.state.position && { ...this.state.position },
-      chat: this.state.chat.slice(), uptime: Math.floor((Date.now() - this.startedAt) / 1000) }
+      uptime: Math.floor((Date.now() - this.startedAt) / 1000) }
   }
   sendChat (value) {
     const message = String(value ?? '').trim()
     if (!message || message.length > 256) throw new Error('消息长度必须为 1-256 个字符')
     if (!this.client || !this.state.connected) throw new Error('Bot 尚未进入服务器')
     this.client.chat(message)
-    this.addChat('outbound', this.state.username, message)
   }
   addChat (kind, sender, message) {
-    this.state.chat.push({ id: Date.now() + Math.random(), kind, sender: sender || 'server', text: message, at: new Date().toISOString() })
-    if (this.state.chat.length > CHAT_LIMIT) this.state.chat.splice(0, this.state.chat.length - CHAT_LIMIT)
-    this.emit('chat', this.state.chat[this.state.chat.length - 1]); this.emit('state', this.snapshot())
+    const entry = { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, kind, sender: sender || 'server', text: message, at: new Date().toISOString() }
+    this.emit('chat', entry)
+    this.emit('state', this.snapshot())
   }
   connect () {
     const generation = Symbol('connection')
     this.generation = generation
-    this.state.phase = this.state.reconnects ? 'reconnecting' : 'connecting'; this.emit('state', this.snapshot())
+    this.state.phase = this.state.reconnects ? 'reconnecting' : 'connecting'
+    this.state.nextReconnectAt = null; this.state.reconnectDelayMs = null; this.state.reconnectAttempt = 0
+    this.state.lastPacketAt = null
+    this.emit('state', this.snapshot())
     let client
     try {
       client = mc.createClient({ host: this.options.mcHost, port: this.options.mcPort, username: this.options.botUsername,
-        auth: 'offline', version: this.options.mcVersion, hideErrors: true,
+        auth: 'offline', version: this.options.mcVersion, hideErrors: true, customPackets: CUSTOM_PACKETS,
         connect: connected => { connected.once('connect', () => installForge3(connected, { log: m => this.log(m) })); this.socket = net.connect({ host: this.options.mcHost, port: this.options.mcPort }); connected.setSocket(this.socket) } })
     } catch (error) { this.fail(error); return }
     this.client = client
@@ -178,15 +190,23 @@ class LightBot extends EventEmitter {
       this.state.lastError = reason
       console.error(`[bot] disconnect: ${reason}`)
     }))
-    client.on('error', active(error => this.fail(error)))
+    client.on('error', active(error => {
+      this.fail(error)
+      if (/^Parse error /.test(this.state.lastError)) {
+        console.error('[bot] fatal protocol parse error; closing connection for recovery')
+        this.socket?.destroy()
+      }
+    }))
     client.on('end', reason => {
       if (this.generation !== generation) return
       const wasConnected = this.state.connected
-      clearTimeout(this.loginTimer); this.loginTimer = null; this.client = this.socket = null
+      clearTimeout(this.loginTimer); clearTimeout(this.stableTimer); clearInterval(this.livenessTimer)
+      this.loginTimer = this.stableTimer = this.livenessTimer = null; this.client = this.socket = null
       this.state.connected = false; this.state.phase = 'offline'
       const endReason = textOf(reason) || this.state.lastError || 'socket closed'
       this.state.lastError ||= endReason
       console.error(`[bot] connection ended: ${endReason}`)
+      if (this.stopping) return
       if (wasConnected) {
         this.consecutiveReconnects++
         this.state.consecutiveReconnects = this.consecutiveReconnects
@@ -214,6 +234,16 @@ class LightBot extends EventEmitter {
       this.emit('state', this.snapshot())
       console.log(`[bot] connection stable for ${STABLE_RESET_MS / 60000} minutes; reconnect counter reset`)
     }, STABLE_RESET_MS)
+    const playStartedAt = Date.now()
+    this.livenessTimer = setInterval(() => {
+      const lastActivity = this.state.lastPacketAt ? Date.parse(this.state.lastPacketAt) : playStartedAt
+      if (this.state.connected && Date.now() - lastActivity > LIVENESS_TIMEOUT_MS) {
+        this.state.lastError = `no packets received for ${LIVENESS_TIMEOUT_MS / 1000} seconds`
+        console.error(`[bot] ${this.state.lastError}; closing stale connection`)
+        this.emit('state', this.snapshot())
+        this.socket?.destroy()
+      }
+    }, 15 * 1000)
     this.client.write('settings', { locale: 'zh_CN', viewDistance: this.options.viewDistance, chatFlags: 0, chatColors: true, skinParts: 0, mainHand: 1, enableTextFiltering: false, enableServerListing: false })
     this.addChat('system', 'bot', `已进入 ${packet.worldName || '服务器'}`)
   }
@@ -221,11 +251,16 @@ class LightBot extends EventEmitter {
     clearTimeout(this.timer)
     const delay = reconnectDelay(this.attempt++)
     this.state.reconnects++
+    this.state.phase = 'reconnecting'
+    this.state.reconnectDelayMs = delay
+    this.state.reconnectAttempt = this.attempt
+    this.state.nextReconnectAt = new Date(Date.now() + delay).toISOString()
     this.timer = setTimeout(() => this.connect(), delay)
+    console.error(`[bot] reconnect attempt ${this.attempt} scheduled in ${delay / 60000} minutes at ${this.state.nextReconnectAt}`)
     this.emit('state', this.snapshot())
   }
   fail (error) { this.state.lastError = error?.message || String(error); if (this.options.debug) console.error(`[bot] ${this.state.lastError}`); this.emit('state', this.snapshot()) }
   log (message) { if (this.options.debug) console.log(message) }
 }
 
-module.exports = { LightBot, mergePosition, reconnectDelay, textOf }
+module.exports = { LightBot, CUSTOM_PACKETS, mergePosition, reconnectDelay, textOf }

@@ -1,9 +1,10 @@
 node_modules/
 .env
+.minecraft-idle-bot.chat.jsonl
+.minecraft-idle-bot.cooldown
 .env.*
 !.env.example
 logs/
 *.log
 .runtime/
 *.bak-*
-.minecraft-idle-bot.cooldown

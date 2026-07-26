@@ -53,3 +53,39 @@ SSH banner；`107.173.39.150:22` TCP 连接超时。两条入口均未到达用�
 - 重连等待调整为 `2 分钟、4 分钟、8 分钟、16 分钟、32 分钟、60 分钟`。
 - 60 分钟重试仍失败时，服务写入 2 小时冷却时间戳并由 systemd 自动重启；此前已建立连接连续掉线超过 3 次也触发同一保护。
 - 新增 `.githooks/post-merge` 与 `scripts/deploy.sh`。服务器配置 `core.hooksPath` 后，`git pull` 会自动执行 `npm ci --omit=dev`、刷新 user systemd unit 并重启挂机服务。
+
+## 2026-07-26 断联根因与聊天修复
+
+### 断联时间线
+
+Bot 在 `18:52:43 CST` 收到 `ECONNRESET`。重连逻辑确实按 `2m -> 4m -> 8m`
+执行：第一次登录超时，第二次被 Minecraft 端 `ECONNREFUSED`，第三次于
+`19:08:09` 开始 Forge 登录。本次没有达到 2 小时 cooldown 条件。
+
+真正导致后续“没有重连”的是登录后立即解码失败：
+
+```text
+Parse error for play.toClient (808920 bytes, 6d942d...) :
+Read error for undefined : unexpected tag end
+```
+
+`0x6d` 是 1.20.1 的 `declare_recipes`。Forge 服务器发送了含模组自定义 recipe
+serializer 的约 790 KiB 配方包，原版 `minecraft-protocol` schema 读偏后产生 NBT
+`unexpected tag end`。解析流已停止，但 TCP 没有关闭，旧代码因此一直误报
+`phase=play`，并在 10 分钟后错误清零重连计数。
+
+### 修复内容
+
+- 挂机 Bot 不需要配方，因此将 `declare_recipes` 覆盖为 `restBuffer` 直接丢弃，避免解码模组配方和持有大对象。
+- 协议解析错误现在会主动关闭连接；进入 play 后 90 秒无任何数据包也会关闭假死连接。
+- 退避时状态新增 `nextReconnectAt` / `reconnectDelayMs` / `reconnectAttempt`，journal 会记录下次重连时间。
+- 修复 `stop()` 与 `end` 的竞态，防止 systemd 停服务时旧连接再次调度重连。
+- 聊天组件使用 `prismarine-chat` 完整处理 `translate` 模板，`1/20` 不再变成 `120`。
+- 发送时不再插入本地 `outbound` 副本，只保留服务器回显，因此 `hi` 只显示一行。
+- 聊天按 JSONL 持久化到 `.minecraft-idle-bot.chat.jsonl`，`GET /api/chat?before=<cursor>&limit=50`
+  提供稳定 cursor 分页。第 1 页始终取最新消息，历史页在新消息到达时不会位移。
+
+### 验证
+
+`npm test` 共 7 项通过，覆盖聊天组件分隔符、发送回显、配方包跳过、
+退避序列及 121 条跨重启分页记录。
