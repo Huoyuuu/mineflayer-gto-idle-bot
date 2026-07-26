@@ -32,6 +32,16 @@ test('sendChat waits for the server echo instead of adding a duplicate', () => {
   assert.equal(chatEvents, 0)
 })
 
+test('keyboard input is clamped to the lightweight control state', () => {
+  const bot = new LightBot()
+  bot.client = { write: () => {} }
+  bot.state.connected = true
+  const result = bot.setInput({ forward: 1, sprint: true })
+  assert.equal(result.input.forward, true)
+  assert.equal(result.input.sprint, true)
+  clearInterval(bot.controlTimer)
+})
+
 test('custom protocol skips Forge recipe payloads the idle bot does not use', async () => {
   const { createDeserializer } = require('../node_modules/minecraft-protocol/src/transforms/serializer')
   const deserializer = createDeserializer({ state: 'play', version: '1.20.1', customPackets: CUSTOM_PACKETS })

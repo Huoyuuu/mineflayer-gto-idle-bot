@@ -19,6 +19,15 @@ bot.on('chat', message => { chatStore.append(message); broadcast('chat', message
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
   if (req.method === 'GET' && url.pathname === '/api/state') return json(res, 200, bot.snapshot())
+  if (req.method === 'POST' && url.pathname === '/api/action') {
+    let body = ''; req.on('data', chunk => { body += chunk }); req.on('end', async () => { try { json(res, 200, await bot.runAction(JSON.parse(body).action)) } catch (error) { json(res, 400, { ok: false, error: error.message }) } }); return
+  }
+  if (req.method === 'POST' && url.pathname === '/api/control') {
+    let body = ''; req.on('data', chunk => { body += chunk }); req.on('end', () => { try { json(res, 200, bot.setInput(JSON.parse(body))) } catch (error) { json(res, 400, { ok: false, error: error.message }) } }); return
+  }
+  if (req.method === 'POST' && url.pathname === '/api/world-input') {
+    let body = ''; req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy() }); req.on('end', async () => { try { const result = await bot.handleWorldInput(JSON.parse(body)); json(res, 200, result) } catch (error) { json(res, 400, { ok: false, error: error.message }) } }); return
+  }
   if (req.method === 'GET' && url.pathname === '/api/chat') return json(res, 200, chatStore.page({ before: url.searchParams.get('before'), limit: url.searchParams.get('limit') }))
   if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, phase: bot.state.phase })
   if (req.method === 'GET' && url.pathname === '/events') {

@@ -25,6 +25,9 @@ const MAX_CONSECUTIVE_RECONNECTS = 3
 const COOLDOWN_MS = 2 * 60 * 60 * 1000
 const STABLE_RESET_MS = 10 * 60 * 1000
 const LIVENESS_TIMEOUT_MS = 90 * 1000
+const ACTION_TIMEOUT_MS = 15 * 1000
+const SILENCER_POS = { x: 94, y: 124, z: -79 }
+const CHEST_POS = { x: 95, y: 124, z: -78 }
 const COOLDOWN_FILE = path.resolve(__dirname, '../.minecraft-idle-bot.cooldown')
 const CUSTOM_PACKETS = {
   '1.20': {
@@ -80,6 +83,10 @@ class LightBot extends EventEmitter {
     this.consecutiveReconnects = 0
     this.attempt = 0
     this.stopping = false
+    this.action = null
+    this.sequence = 0
+    this.controlTimer = null
+    this.input = { forward: false, back: false, left: false, right: false, jump: false, sprint: false }
     this.respawnRequested = false
     this.startedAt = Date.now()
     this.state = {
@@ -89,7 +96,7 @@ class LightBot extends EventEmitter {
       position: null, packets: 0, chunksIgnored: 0, reconnects: 0,
       consecutiveReconnects: 0, cooldownUntil: null,
       nextReconnectAt: null, reconnectDelayMs: null, reconnectAttempt: 0,
-      lastPacketAt: null, lastError: null
+      lastPacketAt: null, lastError: null, p0: null, inventory: []
     }
   }
 
@@ -124,9 +131,12 @@ class LightBot extends EventEmitter {
     this.generation = Symbol('stopped')
     clearTimeout(this.timer); clearTimeout(this.loginTimer)
     clearTimeout(this.stableTimer); clearTimeout(this.cooldownTimer); clearInterval(this.livenessTimer)
+    clearInterval(this.controlTimer)
     this.timer = this.loginTimer = this.stableTimer = this.cooldownTimer = this.livenessTimer = null
     this.client?.end('stopped'); this.socket?.destroy()
     this.client = this.socket = null
+    this.action = null
+    this.controlTimer = null
     this.state.phase = 'offline'; this.state.connected = false
     this.emit('state', this.snapshot())
   }
@@ -162,6 +172,76 @@ class LightBot extends EventEmitter {
     if (!this.client || !this.state.connected) throw new Error('Bot 尚未进入服务器')
     this.client.chat(message)
   }
+  runAction (name) {
+    if (!this.client || !this.state.connected) throw new Error('Bot 尚未进入服务器')
+    if (this.action) throw new Error('已有动作正在执行: ' + this.action)
+    if (name === 'return-p0') return this.returnToP0()
+    if (name === 'empty-silencer') return this.emptySilencer()
+    throw new Error('未知动作')
+  }
+  setInput (input = {}) {
+    if (!this.client || !this.state.connected) throw new Error('Bot 尚未进入服务器')
+    this.input = { ...this.input, ...Object.fromEntries(Object.entries(input).map(([key, value]) => [key, Boolean(value)])) }
+    if (!this.controlTimer) this.controlTimer = setInterval(() => this.applyInput(), 100)
+    return { ok: true, input: this.input }
+  }
+  applyInput () {
+    if (!this.client || !this.state.position) return
+    const speed = this.input.sprint ? 0.22 : 0.12
+    const dx = (this.input.right ? speed : 0) - (this.input.left ? speed : 0)
+    const dz = (this.input.back ? speed : 0) - (this.input.forward ? speed : 0)
+    if (!dx && !dz && !this.input.jump) return
+    this.client.write('position', { x: this.state.position.x + dx, y: this.state.position.y + (this.input.jump ? 0.42 : 0), z: this.state.position.z + dz, onGround: !this.input.jump })
+  }
+  async handleWorldInput ({ button, shiftKey = false, spaceKey = false, target }) {
+    if (!target || ![target.x, target.y, target.z].every(Number.isInteger)) throw new Error('目标方块坐标无效')
+    if (!['left', 'right'].includes(button)) throw new Error('鼠标按钮无效')
+    if (!this.state.position) throw new Error('Bot 尚未获得位置')
+    if (Math.hypot(this.state.position.x - target.x, this.state.position.z - target.z) > 6) throw new Error('目标方块距离 Bot 太远')
+    if (this.action) throw new Error('已有动作正在执行: ' + this.action)
+    this.action = 'world-input'; this.emit('state', this.snapshot())
+    try {
+      if (button === 'left') this.client.write('block_dig', { status: shiftKey ? 2 : (spaceKey ? 1 : 0), location: target, face: 1, sequence: this.sequence++ })
+      else this.client.write('block_place', { hand: 0, location: target, direction: 1, cursorX: 0.5, cursorY: 0.5, cursorZ: 0.5, insideBlock: Boolean(shiftKey), sequence: this.sequence++ })
+      return { ok: true, target, button, shiftKey, spaceKey }
+    } finally { this.action = null; this.emit('state', this.snapshot()) }
+  }
+  moveTo (position) {
+    this.client.write('position', { ...position, onGround: true })
+    this.state.position = { ...(this.state.position || {}), ...position }
+    this.emit('state', this.snapshot())
+  }
+  async returnToP0 () {
+    if (!this.state.p0) throw new Error('P0 尚未记录')
+    this.action = 'return-p0'; this.emit('state', this.snapshot())
+    try { this.moveTo(this.state.p0); return { ok: true, action: this.action, position: this.state.p0 } } finally { this.action = null; this.emit('state', this.snapshot()) }
+  }
+  waitFor (event, predicate = () => true) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { cleanup(); reject(new Error(event + ' 等待超时')) }, ACTION_TIMEOUT_MS)
+      const handler = (...args) => { try { if (!predicate(...args)) return; cleanup(); resolve(args[0]) } catch (error) { cleanup(); reject(error) } }
+      const cleanup = () => { clearTimeout(timer); this.client?.removeListener(event, handler) }
+      this.client.once(event, handler)
+    })
+  }
+  async emptySilencer () {
+    this.action = 'empty-silencer'; this.emit('state', this.snapshot())
+    try {
+      this.moveTo(SILENCER_POS)
+      const windowPromise = this.waitFor('open_window')
+      this.client.write('block_place', { hand: 0, location: SILENCER_POS, direction: 1, cursorX: 0.5, cursorY: 0.5, cursorZ: 0.5, insideBlock: false, sequence: this.sequence++ })
+      const opened = await windowPromise
+      const windowId = opened.windowId
+      const items = await this.waitFor('window_items', packet => packet.windowId === windowId)
+      const slots = items.items.map((item, slot) => ({ item, slot })).filter(({ item, slot }) => slot >= 0 && slot < items.items.length - 36 && item && item.itemId !== 0)
+      for (const { slot } of slots) {
+        this.client.write('window_click', { windowId, stateId: items.stateId, slot, mouseButton: 0, mode: 1, changedSlots: [], cursorItem: { itemId: 0, itemCount: 0, nbtData: null } })
+        await new Promise(resolve => setTimeout(resolve, 120))
+      }
+      this.client.write('close_window', { windowId })
+      return { ok: true, action: this.action, movedSlots: slots.length }
+    } finally { this.action = null; this.emit('state', this.snapshot()) }
+  }
   addChat (kind, sender, message) {
     const entry = { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, kind, sender: sender || 'server', text: message, at: new Date().toISOString() }
     this.emit('chat', entry)
@@ -184,7 +264,8 @@ class LightBot extends EventEmitter {
     const active = handler => (...args) => { if (this.generation === generation && this.client === client) handler(...args) }
     client.on('packet', active((_, meta) => { this.state.packets++; this.state.lastPacketAt = new Date().toISOString(); if (meta?.name === 'map_chunk') this.state.chunksIgnored++ }))
     client.on('login', active(packet => this.onLogin(packet)))
-    client.on('position', active(packet => { this.state.position = mergePosition(this.state.position, packet); client.write('teleport_confirm', { teleportId: packet.teleportId }); client.write('position_look', { ...this.state.position, onGround: false }); this.emit('state', this.snapshot()) }))
+    client.on('position', active(packet => { this.state.position = mergePosition(this.state.position, packet); if (!this.state.p0) this.state.p0 = { x: this.state.position.x, y: this.state.position.y, z: this.state.position.z }; client.write('teleport_confirm', { teleportId: packet.teleportId }); client.write('position_look', { ...this.state.position, onGround: false }); this.emit('state', this.snapshot()) }))
+    client.on('window_items', active(packet => { if (packet.windowId === 0) { this.state.inventory = packet.items || []; this.emit('state', this.snapshot()) } }))
     client.on('update_health', active(packet => { this.state.health = packet.health; this.state.food = packet.food; if (packet.health <= 0 && !this.respawnRequested) { this.respawnRequested = true; client.write('client_command', { actionId: 0 }) } if (packet.health > 0) this.respawnRequested = false; this.emit('state', this.snapshot()) }))
     client.on('respawn', active(packet => { this.respawnRequested = false; this.state.world = packet.worldName || packet.dimension || this.state.world; this.state.position = null; this.emit('state', this.snapshot()) }))
     client.on('playerChat', active(packet => this.addChat('player', textOf(packet.senderName) || packet.sender || packet.senderUuid, packet.plainMessage || textOf(packet.unsignedContent || packet.formattedMessage))))
