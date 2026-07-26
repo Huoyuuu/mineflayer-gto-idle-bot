@@ -12,6 +12,8 @@ const CHAT_LANGUAGE = {
   'commands.list.players': '%s/%s %s'
 }
 const { installForge3 } = require('./forge3')
+const { WorldStore, dimensionBounds, blockName, blockInfo, isSkipped } = require('./world')
+const itemsById = require('minecraft-data')(config.mcVersion).items
 
 const RECONNECT_DELAYS = [
   2 * 60 * 1000,
@@ -26,6 +28,19 @@ const COOLDOWN_MS = 2 * 60 * 60 * 1000
 const STABLE_RESET_MS = 10 * 60 * 1000
 const LIVENESS_TIMEOUT_MS = 90 * 1000
 const ACTION_TIMEOUT_MS = 15 * 1000
+const CONTROL_TICK_MS = 100
+const CONTROL_IDLE_TICKS = 40
+// A browser tab that dies while a key is held must not leave the bot walking forever,
+// so held input expires unless the page keeps refreshing it.
+const INPUT_TIMEOUT_MS = 4 * 1000
+const WORLD_EVENT_THROTTLE_MS = 300
+const MAX_DIG_MS = 8 * 1000
+const WALK_SPEED = 0.18
+const SPRINT_SPEED = 0.32
+const SNEAK_SPEED = 0.08
+const JUMP_VELOCITY = 0.42
+const GRAVITY = 0.16
+const REACH = 6
 const SILENCER_POS = { x: 94, y: 124, z: -79 }
 const CHEST_POS = { x: 95, y: 124, z: -78 }
 const COOLDOWN_FILE = path.resolve(__dirname, '../.minecraft-idle-bot.cooldown')
@@ -68,6 +83,24 @@ function mergePosition (old, packet) {
   }
 }
 
+// Window 0 slots: 0 crafting output, 1-4 crafting, 5-8 armor, 9-35 backpack,
+// 36-44 hotbar, 45 offhand. Only the non-empty ones reach the page, with names.
+const HOTBAR_FIRST = 36
+const HOTBAR_LAST = 44
+function describeInventory (slots) {
+  return (slots || []).flatMap((slot, index) => {
+    const id = slot?.itemId
+    if (!id || slot.present === false) return []
+    return [{
+      slot: index,
+      id,
+      count: slot.itemCount ?? 1,
+      name: itemsById[id]?.name || `item_${id}`,
+      hotbar: index >= HOTBAR_FIRST && index <= HOTBAR_LAST ? index - HOTBAR_FIRST : null
+    }]
+  })
+}
+
 class LightBot extends EventEmitter {
   constructor (options = {}) {
     super()
@@ -86,17 +119,27 @@ class LightBot extends EventEmitter {
     this.action = null
     this.sequence = 0
     this.controlTimer = null
-    this.input = { forward: false, back: false, left: false, right: false, jump: false, sprint: false }
+    this.controlIdleTicks = 0
+    this.lastInputAt = 0
+    this.input = { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false }
+    this.look = { yaw: 0, pitch: 0 }
+    this.velocityY = 0
+    this.sneaking = false
+    this.sprinting = false
+    this.world = new WorldStore({ radius: Math.min(6, Math.max(2, this.options.viewDistance + 1)) })
+    this.worldTimer = null
+    this.dimensionCodec = null
     this.respawnRequested = false
     this.startedAt = Date.now()
     this.state = {
       phase: 'offline', connected: false, username: this.options.botUsername,
       host: this.options.mcHost, port: this.options.mcPort, version: this.options.mcVersion,
-      entityId: null, world: null, gameMode: null, health: null, food: null,
-      position: null, packets: 0, chunksIgnored: 0, reconnects: 0,
-      consecutiveReconnects: 0, cooldownUntil: null,
+      entityId: null, world: null, dimension: null, gameMode: null, health: null, food: null,
+      position: null, look: { yaw: 0, pitch: 0 }, packets: 0, chunksIgnored: 0, chunksLoaded: 0,
+      reconnects: 0, consecutiveReconnects: 0, cooldownUntil: null,
       nextReconnectAt: null, reconnectDelayMs: null, reconnectAttempt: 0,
-      lastPacketAt: null, lastError: null, p0: null, inventory: []
+      lastPacketAt: null, lastError: null, p0: null, inventory: [], heldSlot: 0,
+      timeOfDay: null, dayCount: null, worldStats: null, actionDeadline: null
     }
   }
 
@@ -131,12 +174,11 @@ class LightBot extends EventEmitter {
     this.generation = Symbol('stopped')
     clearTimeout(this.timer); clearTimeout(this.loginTimer)
     clearTimeout(this.stableTimer); clearTimeout(this.cooldownTimer); clearInterval(this.livenessTimer)
-    clearInterval(this.controlTimer)
-    this.timer = this.loginTimer = this.stableTimer = this.cooldownTimer = this.livenessTimer = null
+    this.stopControlLoop(); clearTimeout(this.worldTimer)
+    this.timer = this.loginTimer = this.stableTimer = this.cooldownTimer = this.livenessTimer = this.worldTimer = null
     this.client?.end('stopped'); this.socket?.destroy()
     this.client = this.socket = null
     this.action = null
-    this.controlTimer = null
     this.state.phase = 'offline'; this.state.connected = false
     this.emit('state', this.snapshot())
   }
@@ -181,30 +223,178 @@ class LightBot extends EventEmitter {
   }
   setInput (input = {}) {
     if (!this.client || !this.state.connected) throw new Error('Bot 尚未进入服务器')
-    this.input = { ...this.input, ...Object.fromEntries(Object.entries(input).map(([key, value]) => [key, Boolean(value)])) }
-    if (!this.controlTimer) this.controlTimer = setInterval(() => this.applyInput(), 100)
-    return { ok: true, input: this.input }
+    const flags = ['forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak']
+    for (const key of flags) if (key in input) this.input[key] = Boolean(input[key])
+    if (input.look) this.setLook(input.look.yaw, input.look.pitch)
+    this.controlIdleTicks = 0
+    this.lastInputAt = Date.now()
+    if (!this.controlTimer) this.controlTimer = setInterval(() => this.applyInput(), CONTROL_TICK_MS)
+    return { ok: true, input: this.input, look: this.look }
   }
+  releaseInput (reason) {
+    if (!Object.values(this.input).some(Boolean)) return false
+    this.input = { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false }
+    if (this.client && this.state.connected) this.syncPose()
+    console.error(`[bot] input released: ${reason}`)
+    this.emit('state', this.snapshot())
+    return true
+  }
+  stopControlLoop () {
+    clearInterval(this.controlTimer)
+    this.controlTimer = null
+    this.controlIdleTicks = 0
+  }
+  setLook (yaw, pitch) {
+    if (Number.isFinite(yaw)) this.look.yaw = ((Number(yaw) % 360) + 540) % 360 - 180
+    if (Number.isFinite(pitch)) this.look.pitch = Math.max(-90, Math.min(90, Number(pitch)))
+    this.state.look = { ...this.look }
+    return this.look
+  }
+  // No physics engine: movement is yaw-relative stepping, snapped onto whatever floor
+  // the decoded world says is under the bot, plus a decaying jump impulse.
   applyInput () {
-    if (!this.client || !this.state.position) return
-    const speed = this.input.sprint ? 0.22 : 0.12
-    const dx = (this.input.right ? speed : 0) - (this.input.left ? speed : 0)
-    const dz = (this.input.back ? speed : 0) - (this.input.forward ? speed : 0)
-    if (!dx && !dz && !this.input.jump) return
-    this.client.write('position', { x: this.state.position.x + dx, y: this.state.position.y + (this.input.jump ? 0.42 : 0), z: this.state.position.z + dz, onGround: !this.input.jump })
+    if (!this.client || !this.state.connected || !this.state.position) return
+    if (Date.now() - this.lastInputAt > INPUT_TIMEOUT_MS && this.releaseInput('web page stopped refreshing held keys')) return
+    const { forward, back, left, right, jump, sprint, sneak } = this.input
+    const moving = forward || back || left || right
+    if (!moving && !jump && this.velocityY === 0) {
+      if (++this.controlIdleTicks > CONTROL_IDLE_TICKS) this.stopControlLoop()
+      return
+    }
+    this.controlIdleTicks = 0
+    this.syncPose()
+    const speed = sneak ? SNEAK_SPEED : (sprint ? SPRINT_SPEED : WALK_SPEED)
+    const radians = this.look.yaw * Math.PI / 180
+    const forwardX = -Math.sin(radians)
+    const forwardZ = Math.cos(radians)
+    const axis = (Number(forward) - Number(back))
+    const strafe = (Number(right) - Number(left))
+    const x = this.state.position.x + (forwardX * axis - forwardZ * strafe) * speed
+    const z = this.state.position.z + (forwardZ * axis + forwardX * strafe) * speed
+    const ground = this.world.groundAt(x, this.state.position.y, z)
+    const grounded = ground != null && this.state.position.y <= ground + 0.01
+    if (jump && grounded && this.velocityY <= 0) this.velocityY = JUMP_VELOCITY
+    else if (!grounded || this.velocityY > 0) this.velocityY -= GRAVITY
+    let y = this.state.position.y + this.velocityY
+    if (ground == null) { y = this.state.position.y; this.velocityY = 0 }
+    else if (y <= ground) { y = ground; this.velocityY = 0 }
+    this.state.position = { ...this.state.position, x, y, z, yaw: this.look.yaw, pitch: this.look.pitch }
+    this.client.write('position_look', { x, y, z, yaw: this.look.yaw, pitch: this.look.pitch, onGround: this.velocityY === 0 })
+    this.emit('state', this.snapshot())
   }
-  async handleWorldInput ({ button, shiftKey = false, spaceKey = false, target }) {
+  // Sneak and sprint are entity actions, not movement flags; the server ignores speed
+  // changes that are not announced.
+  syncPose () {
+    if (!this.state.entityId) return
+    if (this.input.sneak !== this.sneaking) {
+      this.sneaking = this.input.sneak
+      this.client.write('entity_action', { entityId: this.state.entityId, actionId: this.sneaking ? 0 : 1, jumpBoost: 0 })
+    }
+    const sprinting = this.input.sprint && !this.input.sneak && (this.input.forward || this.input.back || this.input.left || this.input.right)
+    if (sprinting !== this.sprinting) {
+      this.sprinting = sprinting
+      this.client.write('entity_action', { entityId: this.state.entityId, actionId: sprinting ? 3 : 4, jumpBoost: 0 })
+    }
+  }
+  faceBlock (target) {
+    if (!this.state.position) return
+    const dx = target.x + 0.5 - this.state.position.x
+    const dy = target.y + 0.5 - (this.state.position.y + 1.62)
+    const dz = target.z + 0.5 - this.state.position.z
+    const yaw = -Math.atan2(dx, dz) * 180 / Math.PI
+    const pitch = -Math.atan2(dy, Math.hypot(dx, dz)) * 180 / Math.PI
+    this.setLook(yaw, pitch)
+    this.client.write('position_look', { ...this.state.position, yaw: this.look.yaw, pitch: this.look.pitch, onGround: true })
+  }
+  blockAt (target) {
+    const state = this.world.getBlock(target.x, target.y, target.z)
+    return state == null ? null : { state, name: blockName(state), info: blockInfo(state) }
+  }
+  // Rough vanilla bare-hand timing; the server is still the authority, this only keeps
+  // the two block_dig packets far enough apart to be accepted.
+  // Bedrock reports hardness -1; liquids report 100 with an empty bounding box.
+  unbreakable (block) {
+    const info = block?.info
+    if (!info || !Number.isFinite(info.hardness)) return false
+    return info.hardness < 0 || (info.hardness >= 100 && info.boundingBox === 'empty')
+  }
+  digDuration (block) {
+    const hardness = block?.info?.hardness
+    if (!Number.isFinite(hardness)) return 400
+    if (hardness === 0) return 0
+    const seconds = hardness * (block.info.harvestTools ? 5 : 1.5)
+    return Math.min(MAX_DIG_MS, Math.round(seconds * 1000))
+  }
+  async handleWorldInput ({ button, shiftKey = false, target }) {
     if (!target || ![target.x, target.y, target.z].every(Number.isInteger)) throw new Error('目标方块坐标无效')
     if (!['left', 'right'].includes(button)) throw new Error('鼠标按钮无效')
+    if (!this.client || !this.state.connected) throw new Error('Bot 尚未进入服务器')
     if (!this.state.position) throw new Error('Bot 尚未获得位置')
-    if (Math.hypot(this.state.position.x - target.x, this.state.position.z - target.z) > 6) throw new Error('目标方块距离 Bot 太远')
+    const distance = Math.hypot(this.state.position.x - (target.x + 0.5), this.state.position.y + 1.62 - (target.y + 0.5), this.state.position.z - (target.z + 0.5))
+    if (distance > REACH) throw new Error(`目标方块距离 Bot ${distance.toFixed(1)} 格，超出 ${REACH} 格交互范围`)
     if (this.action) throw new Error('已有动作正在执行: ' + this.action)
-    this.action = 'world-input'; this.emit('state', this.snapshot())
+    const block = this.blockAt(target)
+    if (button === 'left') {
+      if (block && isSkipped(block.state)) throw new Error('目标位置是空气，没有可破坏的方块')
+      if (this.unbreakable(block)) throw new Error(`${block.name} 无法破坏`)
+    }
+    return button === 'left' ? this.digBlock(target, block, shiftKey) : this.useBlock(target, block, shiftKey)
+  }
+  async digBlock (target, block, instant) {
+    const duration = instant ? 0 : this.digDuration(block)
+    this.action = `dig ${block?.name || 'block'}`
+    this.state.actionDeadline = new Date(Date.now() + duration).toISOString()
+    this.emit('state', this.snapshot())
     try {
-      if (button === 'left') this.client.write('block_dig', { status: shiftKey ? 2 : (spaceKey ? 1 : 0), location: target, face: 1, sequence: this.sequence++ })
-      else this.client.write('block_place', { hand: 0, location: target, direction: 1, cursorX: 0.5, cursorY: 0.5, cursorZ: 0.5, insideBlock: Boolean(shiftKey), sequence: this.sequence++ })
-      return { ok: true, target, button, shiftKey, spaceKey }
+      this.faceBlock(target)
+      this.client.write('block_dig', { status: 0, location: target, face: 1, sequence: this.sequence++ })
+      this.client.write('arm_animation', { hand: 0 })
+      if (duration > 0) await new Promise(resolve => setTimeout(resolve, duration))
+      this.client.write('block_dig', { status: 2, location: target, face: 1, sequence: this.sequence++ })
+      return { ok: true, action: 'dig', target, block: block?.name || null, durationMs: duration }
+    } finally {
+      this.action = null; this.state.actionDeadline = null; this.emit('state', this.snapshot())
+    }
+  }
+  async useBlock (target, block, insideBlock) {
+    this.action = `use ${block?.name || 'block'}`
+    this.emit('state', this.snapshot())
+    try {
+      this.faceBlock(target)
+      this.client.write('block_place', { hand: 0, location: target, direction: 1, cursorX: 0.5, cursorY: 0.5, cursorZ: 0.5, insideBlock: Boolean(insideBlock), sequence: this.sequence++ })
+      this.client.write('arm_animation', { hand: 0 })
+      return { ok: true, action: 'use', target, block: block?.name || null }
     } finally { this.action = null; this.emit('state', this.snapshot()) }
+  }
+  setHeldSlot (slot) {
+    const slotId = Number.parseInt(slot, 10)
+    if (!Number.isInteger(slotId) || slotId < 0 || slotId > 8) throw new Error('快捷栏槽位必须为 0-8')
+    if (!this.client || !this.state.connected) throw new Error('Bot 尚未进入服务器')
+    this.client.write('held_item_slot', { slotId })
+    this.state.heldSlot = slotId
+    this.emit('state', this.snapshot())
+    return { ok: true, heldSlot: slotId }
+  }
+  worldSlice ({ radius, ceiling } = {}) {
+    if (!this.state.position) return { ok: false, error: 'Bot 尚未获得位置' }
+    const clamped = Math.min(48, Math.max(4, Number.parseInt(radius, 10) || 24))
+    // `Number('')` is 0, which would silently slice the world at bedrock.
+    const requested = Number.parseInt(ceiling, 10)
+    const level = Number.isInteger(requested) ? requested : Math.floor(this.state.position.y) + 2
+    return {
+      ok: true,
+      bot: { x: this.state.position.x, y: this.state.position.y, z: this.state.position.z, yaw: this.look.yaw, pitch: this.look.pitch },
+      ...this.world.surface({ centerX: Math.floor(this.state.position.x), centerZ: Math.floor(this.state.position.z), radius: clamped, ceiling: level })
+    }
+  }
+  markWorldChanged () {
+    this.state.chunksLoaded = this.world.chunks.size
+    if (this.worldTimer) return
+    this.worldTimer = setTimeout(() => {
+      this.worldTimer = null
+      this.state.worldStats = this.world.stats()
+      this.emit('world', { revision: this.world.revision, ...this.state.worldStats })
+    }, WORLD_EVENT_THROTTLE_MS)
   }
   moveTo (position) {
     this.client.write('position', { ...position, onGround: true })
@@ -245,7 +435,6 @@ class LightBot extends EventEmitter {
   addChat (kind, sender, message) {
     const entry = { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, kind, sender: sender || 'server', text: message, at: new Date().toISOString() }
     this.emit('chat', entry)
-    this.emit('state', this.snapshot())
   }
   connect () {
     const generation = Symbol('connection')
@@ -262,12 +451,61 @@ class LightBot extends EventEmitter {
     } catch (error) { this.fail(error); return }
     this.client = client
     const active = handler => (...args) => { if (this.generation === generation && this.client === client) handler(...args) }
-    client.on('packet', active((_, meta) => { this.state.packets++; this.state.lastPacketAt = new Date().toISOString(); if (meta?.name === 'map_chunk') this.state.chunksIgnored++ }))
+    client.on('packet', active((_, meta) => { this.state.packets++; this.state.lastPacketAt = new Date().toISOString() }))
     client.on('login', active(packet => this.onLogin(packet)))
-    client.on('position', active(packet => { this.state.position = mergePosition(this.state.position, packet); if (!this.state.p0) this.state.p0 = { x: this.state.position.x, y: this.state.position.y, z: this.state.position.z }; client.write('teleport_confirm', { teleportId: packet.teleportId }); client.write('position_look', { ...this.state.position, onGround: false }); this.emit('state', this.snapshot()) }))
-    client.on('window_items', active(packet => { if (packet.windowId === 0) { this.state.inventory = packet.items || []; this.emit('state', this.snapshot()) } }))
+    client.on('position', active(packet => {
+      this.state.position = mergePosition(this.state.position, packet)
+      this.setLook(this.state.position.yaw, this.state.position.pitch)
+      this.velocityY = 0
+      this.world.setCenter(Math.floor(this.state.position.x) >> 4, Math.floor(this.state.position.z) >> 4)
+      if (!this.state.p0) this.state.p0 = { x: this.state.position.x, y: this.state.position.y, z: this.state.position.z }
+      client.write('teleport_confirm', { teleportId: packet.teleportId })
+      client.write('position_look', { ...this.state.position, onGround: false })
+      this.emit('state', this.snapshot())
+    }))
+    client.on('update_view_position', active(packet => this.world.setCenter(packet.chunkX, packet.chunkZ)))
+    client.on('map_chunk', active(packet => {
+      if (this.world.loadColumn(packet.x, packet.z, packet.chunkData)) this.markWorldChanged()
+      else this.state.chunksIgnored++
+    }))
+    client.on('unload_chunk', active(packet => { this.world.unloadColumn(packet.chunkX, packet.chunkZ); this.markWorldChanged() }))
+    client.on('block_change', active(packet => {
+      const { x, y, z } = packet.location
+      if (this.world.setBlock(x, y, z, packet.type)) this.markWorldChanged()
+    }))
+    client.on('multi_block_change', active(packet => {
+      const base = packet.chunkCoordinates
+      let changed = false
+      for (const record of packet.records || []) {
+        const value = Number(record)
+        const state = Math.floor(value / 4096)
+        const local = value % 4096
+        const x = (base.x << 4) + ((local >> 8) & 15)
+        const z = (base.z << 4) + ((local >> 4) & 15)
+        const y = (base.y << 4) + (local & 15)
+        changed = this.world.setBlock(x, y, z, state) || changed
+      }
+      if (changed) this.markWorldChanged()
+    }))
+    client.on('update_time', active(packet => {
+      const time = Number(packet.time)
+      this.state.timeOfDay = ((Math.abs(time) % 24000) + 24000) % 24000
+      this.state.dayCount = Math.floor(Number(packet.age) / 24000)
+    }))
+    client.on('held_item_slot', active(packet => { this.state.heldSlot = packet.slot ?? this.state.heldSlot; this.emit('state', this.snapshot()) }))
+    client.on('window_items', active(packet => { if (packet.windowId === 0) { this.state.inventory = describeInventory(packet.items); this.emit('state', this.snapshot()) } }))
     client.on('update_health', active(packet => { this.state.health = packet.health; this.state.food = packet.food; if (packet.health <= 0 && !this.respawnRequested) { this.respawnRequested = true; client.write('client_command', { actionId: 0 }) } if (packet.health > 0) this.respawnRequested = false; this.emit('state', this.snapshot()) }))
-    client.on('respawn', active(packet => { this.respawnRequested = false; this.state.world = packet.worldName || packet.dimension || this.state.world; this.state.position = null; this.emit('state', this.snapshot()) }))
+    client.on('respawn', active(packet => {
+      this.respawnRequested = false
+      this.state.world = packet.worldName || this.state.world
+      this.state.dimension = packet.dimension || this.state.dimension
+      this.state.position = null
+      this.velocityY = 0
+      // Block ids are dimension local: keeping the old column would render the wrong world.
+      this.world.reset(packet.worldName, dimensionBounds(this.dimensionCodec, packet.dimension))
+      this.markWorldChanged()
+      this.emit('state', this.snapshot())
+    }))
     client.on('playerChat', active(packet => this.addChat('player', textOf(packet.senderName) || packet.sender || packet.senderUuid, packet.plainMessage || textOf(packet.unsignedContent || packet.formattedMessage))))
     client.on('systemChat', active(packet => this.addChat(packet.positionId === 2 ? 'actionbar' : 'system', 'server', textOf(packet.formattedMessage))))
     client.on('disconnect', active(packet => {
@@ -287,6 +525,11 @@ class LightBot extends EventEmitter {
       const wasConnected = this.state.connected
       clearTimeout(this.loginTimer); clearTimeout(this.stableTimer); clearInterval(this.livenessTimer)
       this.loginTimer = this.stableTimer = this.livenessTimer = null; this.client = this.socket = null
+      this.stopControlLoop()
+      this.input = { forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false }
+      this.sneaking = this.sprinting = false
+      this.velocityY = 0
+      this.action = null
       this.state.connected = false; this.state.phase = 'offline'
       const endReason = textOf(reason) || this.state.lastError || 'socket closed'
       this.state.lastError ||= endReason
@@ -312,6 +555,10 @@ class LightBot extends EventEmitter {
   onLogin (packet) {
     clearTimeout(this.loginTimer); this.loginTimer = null; this.attempt = 0
     this.state.phase = 'play'; this.state.connected = true; this.state.entityId = packet.entityId; this.state.world = packet.worldName; this.state.gameMode = packet.gameMode; this.state.lastError = null
+    this.dimensionCodec = packet.dimensionCodec
+    this.state.dimension = packet.worldType || packet.dimension || null
+    this.world.reset(packet.worldName, dimensionBounds(this.dimensionCodec, this.state.dimension))
+    this.state.worldStats = this.world.stats()
     clearTimeout(this.stableTimer)
     this.stableTimer = setTimeout(() => {
       this.consecutiveReconnects = 0
@@ -348,4 +595,4 @@ class LightBot extends EventEmitter {
   log (message) { if (this.options.debug) console.log(message) }
 }
 
-module.exports = { LightBot, CUSTOM_PACKETS, mergePosition, reconnectDelay, textOf }
+module.exports = { LightBot, CUSTOM_PACKETS, mergePosition, reconnectDelay, textOf, describeInventory }

@@ -1,9 +1,108 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Idle Bot</title><script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script><style>:root{font-family:ui-monospace,monospace;color:#292524;background:#fafaf9}*{box-sizing:border-box}body{margin:0}.shell{display:grid;grid-template-columns:240px minmax(420px,1fr) 320px;height:100vh;gap:1px;background:#d6d3d1}.panel{background:#fff;min-width:0}.left,.right{padding:18px;overflow:auto}.left{display:flex;flex-direction:column;gap:16px}.title{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#78716c}.info{display:grid;gap:8px;font-size:12px}.info div{display:flex;justify-content:space-between}.info dt{color:#78716c}.actions{display:grid;gap:8px}.actions button{border:1px solid #292524;background:#292524;color:#fff;padding:9px}.center{display:flex;flex-direction:column}.toolbar{height:44px;border-bottom:1px solid #e7e5e4;padding:14px;font-size:11px;display:flex;justify-content:space-between}.map{flex:1;background:#eef2f1;position:relative}.map canvas{width:100%;height:100%;display:block}.hint{position:absolute;left:12px;bottom:10px;background:#fffddcdd;padding:6px;font-size:10px}.right{display:flex;flex-direction:column}.chat-title{font-size:11px;letter-spacing:.14em;color:#78716c}.chat{flex:1;overflow:auto;border-top:1px solid #e7e5e4;margin-top:12px;padding-top:12px;font-size:12px}.msg{margin:0 0 8px}.msg time{color:#a8a29e;margin-right:5px}.chat-form{display:flex;gap:6px;border-top:1px solid #e7e5e4;padding-top:10px}.chat-form input{min-width:0;flex:1;padding:8px;border:1px solid #d6d3d1}.chat-form button{width:40px;background:#292524;color:#fff;border:0}@media(max-width:900px){.shell{grid-template-columns:190px 1fr}.right{grid-column:1/-1;height:300px}}</style></head><body><main class="shell"><aside class="panel left"><div class="title">minimal presence</div><h1 style="font-size:20px;margin:0">Idle Bot</h1><div id="phase">offline</div><dl id="info" class="info"></dl><div class="actions"><button id="return-p0">回到初始位置 P0</button><button id="empty-silencer">清空消声仓到箱子</button></div><div class="title">inventory</div><div id="inventory" style="font-size:9px"></div><div style="font-size:10px;color:#78716c">WASD 移动，Shift/Space 修饰，左键/右键交互</div></aside><section class="panel center"><div class="toolbar"><span>3D NEIGHBORHOOD · 16×16×16</span><span id="target">未选中</span></div><div class="map"><canvas id="map" tabindex="0"></canvas><div class="hint">点击选中方块；双击可交互容器</div></div></section><aside class="panel right"><div class="chat-title">CHAT</div><div id="chat" class="chat"></div><form id="chat-form" class="chat-form"><input id="message" maxlength="256" placeholder="发送消息"><button type="submit"><i data-lucide="send"></i></button></form></aside></main><script>
-const $=function(s){return document.querySelector(s)},phase=$("#phase"),info=$("#info"),chat=$("#chat"),canvas=$("#map"),ctx=canvas.getContext("2d");let state=null,target=null,messages=[],keys=new Set();const esc=function(s){return String(s==null?"":s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]})};
-function render(s){state=s;phase.textContent=s.phase+(s.action?" · "+s.action:"");info.innerHTML=[["name",s.username],["world",s.world||"--"],["health",s.health==null?"--":s.health+" / 20"],["position",s.position?Number(s.position.x).toFixed(1)+", "+Number(s.position.y).toFixed(1)+", "+Number(s.position.z).toFixed(1):"--"],["P0",s.p0?Number(s.p0.x).toFixed(1)+", "+Number(s.p0.y).toFixed(1)+", "+Number(s.p0.z).toFixed(1):"--"],["retry",s.nextReconnectAt?new Date(s.nextReconnectAt).toLocaleTimeString():"--"]].map(function(x){return "<div><dt>"+x[0]+"</dt><dd>"+esc(x[1])+"</dd></div>"}).join("");$("#inventory").textContent=(s.inventory||[]).map(function(x){return x&&x.itemId?x.itemId+" ×"+x.itemCount:"-"}).join(" | ");draw()}
-let camera={zoom:1,tilt:0};let dragging=false,lastPointer=null;
-function draw(){var w=canvas.clientWidth,h=canvas.clientHeight,d=devicePixelRatio||1;canvas.width=w*d;canvas.height=h*d;ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);var ox=w/2,oy=h*.42,sx=Math.min(28,w/22)*camera.zoom,sy=sx*.5;for(var z=-8;z<8;z++)for(var x=-8;x<8;x++){var px=ox+(x-z)*sx,py=oy+(x+z)*sy+camera.tilt;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px+sx,py+sy);ctx.lineTo(px,py+sy*2);ctx.lineTo(px-sx,py+sy);ctx.closePath();ctx.fillStyle=(x+z)%2?'#c2cbc7':'#aeb9b4';ctx.fill();ctx.strokeStyle='#87928d';ctx.stroke()}if(target){var dx=target.x-(state.position.x|0),dz=target.z-(state.position.z|0),tx=ox+(dx-dz)*sx,tz=oy+(dx+dz)*sy+camera.tilt;ctx.beginPath();ctx.moveTo(tx,tz);ctx.lineTo(tx+sx,tz+sy);ctx.lineTo(tx,tz+sy*2);ctx.lineTo(tx-sx,tz+sy);ctx.closePath();ctx.strokeStyle='#dc2626';ctx.lineWidth=3;ctx.stroke();ctx.lineWidth=1}}
-function pick(e){if(!state||!state.position)return;var r=canvas.getBoundingClientRect(),sx=Math.min(28,r.width/22)*camera.zoom,sy=sx*.5,px=e.clientX-r.left-r.width/2,py=e.clientY-r.top-r.height*.42-camera.tilt,dx=Math.round((px/sx+py/sy)/2),dz=Math.round((py/sy-px/sx)/2);if(Math.abs(dx)>8||Math.abs(dz)>8)return;target={x:(state.position.x|0)+dx,y:state.position.y|0,z:(state.position.z|0)+dz};$('#target').textContent='目标 '+target.x+','+target.y+','+target.z;draw()}
-async function input(e){if(dragging||!target)return;var r=await fetch('/api/world-input',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({button:e.button===2?'right':'left',shiftKey:e.shiftKey,spaceKey:keys.has('Space'),target:target})});if(!r.ok)alert((await r.json()).error)}
-canvas.oncontextmenu=function(e){e.preventDefault()};canvas.ondblclick=function(e){pick(e);input(e)};canvas.onclick=function(e){if(!dragging)pick(e)};canvas.onmousedown=function(e){if(e.button===0){dragging=true;lastPointer={x:e.clientX,y:e.clientY}}else if(e.button===2){pick(e);input(e)}};canvas.onmouseup=function(){dragging=false;lastPointer=null};canvas.onmousemove=function(e){if(!dragging||!lastPointer)return;camera.tilt+=e.clientY-lastPointer.y;lastPointer={x:e.clientX,y:e.clientY};draw()};canvas.onwheel=function(e){e.preventDefault();camera.zoom=Math.max(.65,Math.min(1.8,camera.zoom*(e.deltaY<0?1.08:.92)));draw()};function syncKeys(){fetch("/api/control",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({forward:keys.has("KeyW"),back:keys.has("KeyS"),left:keys.has("KeyA"),right:keys.has("KeyD"),sprint:keys.has("ShiftLeft")||keys.has("ShiftRight"),jump:keys.has("Space")})}).catch(function(){})};window.onkeydown=function(e){if(["KeyW","KeyA","KeyS","KeyD","ShiftLeft","ShiftRight","Space"].indexOf(e.code)>=0){e.preventDefault();keys.add(e.code);syncKeys()}};window.onkeyup=function(e){keys.delete(e.code);syncKeys()};async function action(name){var r=await fetch("/api/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:name})});if(!r.ok)alert((await r.json()).error)}$("#return-p0").onclick=function(){action("return-p0")};$("#empty-silencer").onclick=function(){action("empty-silencer")};function renderChat(){chat.innerHTML=messages.map(function(m){return "<p class=msg><time>"+new Date(m.at).toLocaleTimeString()+"</time><b>"+esc(m.sender)+"</b> "+esc(m.text)+"</p>"}).join("");chat.scrollTop=chat.scrollHeight};$("#chat-form").onsubmit=async function(e){e.preventDefault();var i=$("#message"),m=i.value.trim();if(!m)return;var r=await fetch("/api/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:m})});if(r.ok)i.value=""};fetch("/api/state").then(function(r){return r.json()}).then(render);fetch("/api/chat?limit=100").then(function(r){return r.json()}).then(function(d){messages=d.items;renderChat()});var ev=new EventSource("/events");ev.addEventListener("state",function(e){render(JSON.parse(e.data))});ev.addEventListener("chat",function(e){messages.push(JSON.parse(e.data));renderChat()});addEventListener("resize",draw);lucide.createIcons();draw();
-</script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Idle Bot · 世界视图</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%231c1917'/><rect x='4' y='4' width='8' height='8' rx='1' fill='%23faf9f7'/></svg>">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main class="shell">
+
+  <aside class="panel rail">
+    <header class="rail-head">
+      <div class="eyebrow">minimal presence</div>
+      <h1>Idle Bot</h1>
+      <div class="phase"><span id="phase-dot" class="dot"></span><span id="phase-text">offline</span></div>
+      <p id="phase-note" class="note"></p>
+    </header>
+
+    <section class="block">
+      <div class="eyebrow">vitals</div>
+      <div class="meter"><span class="meter-label">生命</span><div class="bar"><i id="health-bar" class="fill health"></i></div><span id="health-text" class="meter-value">--</span></div>
+      <div class="meter"><span class="meter-label">饥饿</span><div class="bar"><i id="food-bar" class="fill food"></i></div><span id="food-text" class="meter-value">--</span></div>
+    </section>
+
+    <section class="block">
+      <div class="eyebrow">telemetry</div>
+      <dl id="info" class="info"></dl>
+    </section>
+
+    <section class="block">
+      <div class="eyebrow">hotbar</div>
+      <div id="hotbar" class="hotbar"></div>
+      <div id="inventory" class="inventory"></div>
+    </section>
+
+    <section class="block">
+      <div class="eyebrow">actions</div>
+      <div class="actions">
+        <button id="return-p0" type="button">回到初始位置 P0</button>
+        <button id="empty-silencer" type="button">清空消声仓到箱子</button>
+      </div>
+      <p id="action-note" class="note"></p>
+    </section>
+  </aside>
+
+  <section class="panel stage">
+    <div class="toolbar">
+      <div class="toolbar-main">
+        <span class="eyebrow">world</span>
+        <strong id="world-name">--</strong>
+        <span id="world-clock" class="chip"></span>
+        <span id="world-chunks" class="chip subtle"></span>
+      </div>
+      <div class="toolbar-tools">
+        <label class="tool"><span>层高 Y</span><input id="ceiling" type="range" min="-64" max="320" step="1" value="120"><output id="ceiling-value">--</output></label>
+        <label class="tool"><span>范围</span><select id="radius"><option value="12">12</option><option value="20" selected>20</option><option value="32">32</option><option value="48">48</option></select></label>
+        <button id="rotate" class="ghost" type="button" title="旋转视角 (R)">⟳</button>
+        <button id="recenter" class="ghost" type="button" title="回到 Bot 视角">⌖</button>
+      </div>
+    </div>
+
+    <div class="viewport">
+      <canvas id="map" tabindex="0" aria-label="世界等距视图"></canvas>
+      <div id="control-badge" class="badge">点击画布接管控制</div>
+      <div id="tooltip" class="tooltip" hidden></div>
+      <div class="legend">
+        <div><b>左键</b> 选中 · <b>拖动</b> 平移 · <b>滚轮</b> 缩放 · <b>R</b> 旋转</div>
+        <div><b>右键/双击</b> 使用 · <b>Shift+双击</b> 立即挖掘 · <b>Esc</b> 释放控制</div>
+      </div>
+      <div id="keycaps" class="keycaps">
+        <span data-key="KeyQ">Q</span><span data-key="KeyW">W</span><span data-key="KeyE">E</span>
+        <span data-key="KeyA">A</span><span data-key="KeyS">S</span><span data-key="KeyD">D</span>
+        <span data-key="Space" class="wide">Space</span><span data-key="ShiftLeft">Shift</span><span data-key="ControlLeft">Ctrl</span>
+      </div>
+    </div>
+
+    <div class="statusbar">
+      <span id="selection">未选中方块</span>
+      <span id="world-state" class="subtle"></span>
+    </div>
+  </section>
+
+  <aside class="panel chat-panel">
+    <div class="chat-head">
+      <div class="eyebrow">chat</div>
+      <div class="chat-head-tools">
+        <span id="chat-total" class="chip subtle"></span>
+        <button id="load-older" class="ghost" type="button" hidden>加载更早</button>
+      </div>
+    </div>
+    <div id="chat" class="chat"></div>
+    <button id="jump-latest" class="jump" type="button" hidden>↓ 回到最新</button>
+    <form id="chat-form" class="chat-form" autocomplete="off">
+      <input id="message" maxlength="256" placeholder="发送消息 / 指令" aria-label="发送消息">
+      <button type="submit" title="发送">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg>
+      </button>
+    </form>
+  </aside>
+
+</main>
+<script src="/view-math.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

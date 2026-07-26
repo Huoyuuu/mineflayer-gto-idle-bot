@@ -2,35 +2,73 @@
 
 ## Architecture
 
-- `src/light-bot.js`: 唯一 Bot 状态机。只处理连接生命周期、自身状态和聊天。
+- `src/light-bot.js`: 唯一 Bot 状态机。连接生命周期、自身状态、聊天、世界包接入、按键控制与方块交互。
+- `src/world.js`: 自研 1.18+ 区块解码与有界世界缓存。只保存方块 state id，不依赖 prismarine-chunk。
 - `src/forge3.js`: 从参考 GTO 项目复用的 Forge 1.20.1 FML3 登录握手；不要删除。
-- `src/server.js`: Node 内置 HTTP、SSE 状态/聊天推送、聊天 GET 分页和 POST；端口从 `WEB_PORT` 自动递增。
+- `src/server.js`: `createApp(bot, chatStore)` 返回可测试的 HTTP + SSE 应用；`main()` 只在直接运行时启动。
 - `src/chat-store.js`: 追加式 JSONL 聊天存储；内存只保留每行的 byte offset，页面按 cursor 读连续字节范围。
-- `public/index.html`: 单文件三栏纸白界面：左状态/背包/动作，中间浏览器 Canvas GUI，右聊天。
+- `public/index.html` + `app.css` + `app.js`: 纸白三栏界面（状态 / 世界 / 聊天）。
+- `public/view-math.js`: 页面里**没有 DOM 依赖**的纯函数（旋转、配色、键盘意图、时钟）。浏览器挂在
+  `window.ViewMath`，Node 里可 `require`，因此这些逻辑有真单元测试。
+- `scripts/preview.js`: 开发用预览服务器，合成世界 + 假 Bot，不连接 Minecraft。改 UI 时用它，
+  避免与线上同名账号 duplicate login。
+
+## World decoding
+
+`map_chunk.chunkData` 按 1.18+ 格式逐段解析：`blockCount(i16)` + 方块调色板容器 + 生物群系调色板容器。
+调色板三态：`bits=0` 单值、`bits<=8`（生物群系 `<=3`）间接、否则直接。条目 LSB 优先、不跨 long，
+但会跨 long 内的 32 位边界，因此解码用 hi/lo 双 32 位拼接（BigInt 每次刷新会产生上百万次分配）。
+
+不变量：**一列区块必须恰好消耗完缓冲区**。多余或不足一律判为解析失败并丢弃该列，
+错误计数进 `state.worldStats.errors`。这条自校验是"格式理解错了"时唯一的兜底。
+
+内存：每个非空段 `Uint16Array(4096)` = 8 KiB，全空段只存一个数字。半径 `viewDistance+1`（默认 3）
+之外的区块列即时淘汰，`unload_chunk` 同步删除，`maxChunks` 兜底。实测 5×5 列 / 46 段 = 368 KiB。
+维度切换（`respawn`）必须 `world.reset()`：方块 state id 是按维度注册表定义的。
+
+## HTTP API
+
+```text
+GET  /api/state                      自身状态快照（含 look / worldStats / inventory / timeOfDay）
+GET  /api/world?radius=&ceiling=     以 Bot 为中心的地表切片：palette + blocks + heights
+GET  /api/chat?before=&limit=        分页聊天，end-exclusive cursor
+GET  /events                         SSE：state / chat / world 三类事件 + 25s 心跳
+POST /api/chat      {message}
+POST /api/action    {action}         return-p0 / empty-silencer
+POST /api/control   {forward,...,look}   按键状态，**4 秒过期**
+POST /api/held      {slot}           0-8 快捷栏
+POST /api/world-input {button,shiftKey,target}  left=挖掘 right=使用
+```
+
+`blocks` 里 `-1` 表示该列没有区块数据，`-2` 表示有数据但整列都是空气。
 
 ## Invariants
 
-- 不添加 `map_chunk`、entity、block、inventory 的业务处理器。
-- 不导入 mineflayer、prismarine-chunk、prismarine-physics 或渲染资源。
+- 不添加 entity、玩家列表、物理引擎；不导入 mineflayer、prismarine-chunk、prismarine-physics、Three.js。
+- 世界解码只保留 state id，且必须受半径与 `maxChunks` 双重约束；任何"顺手缓存一下"都会破坏内存预算。
 - position 包必须同时发送 `teleport_confirm` 和 `position_look`。
 - keepalive 由 `minecraft-protocol` 默认插件负责；不要设置 `keepAlive: false`。
-- 1.20.x `declare_recipes` 必须保持 `restBuffer` 覆盖；Forge 自定义 serializer 不能用原版 schema 解码，Bot 也不使用配方。
+- 1.20.x `declare_recipes` 必须保持 `restBuffer` 覆盖；Forge 自定义 serializer 不能用原版 schema 解码。
 - play 阶段协议解析错误必须终止 socket，90 秒无包 watchdog 是假在线的最后保护。
+- **按键状态必须有服务端过期时间**：网页崩溃时不能留下一个一直向前走的 Bot。改动 `/api/control`
+  时要同时保证网页每 100ms 刷新一次。
+- 网页键盘只能在"画布已接管"时拦截；输入框内一律不拦截（`keyIntent` 有测试守着）。
 - `.env` 不得提交；网页默认仅绑定 loopback。
 - `.minecraft-idle-bot.chat.jsonl` 和 `.minecraft-idle-bot.cooldown` 是运行数据，必须持久保留且不得提交。
-- 中间 GUI 的等距网格、选框、拖拽/滚轮相机全部在浏览器端执行；服务端不保存渲染缓存，目标坐标仅在交互请求时发送。
 
 ## Verification
 
 ```powershell
 npm ci
-npm test
-npm run check
+npm test          # 34 项
+npm run check     # 服务端与页面脚本语法
+npm run preview   # 合成世界，浏览器实测 UI，不碰线上账号
 git diff --check
 ```
 
 实服验收关注：进入 `play`、聊天收发、坐标/生命更新、死亡后单次复活、断线重连，
-以及长时间运行时 RSS 是否稳定。参考项目已有同用户名进程运行时不要并发登录。
+`/api/state` 里的 `worldStats.errors` 应保持 0，以及长时间运行时 RSS 是否稳定
+（基线 76 MiB，世界缓存预期增量 < 5 MiB）。参考项目已有同用户名进程运行时不要并发登录。
 
 ## Deployment Status (2026-07-23)
 
