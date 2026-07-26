@@ -18,6 +18,17 @@ npm start
 
 打开终端打印的地址。若 `WEB_PORT` 被占用，会自动使用后续空闲端口。
 
+## 线上部署
+
+服务器首次部署时执行一次 `scripts/deploy.sh`。它会安装并启用 user systemd service 和
+每分钟运行的更新 timer。之后 push 到 `server-live` 分支时，服务器会自动 fast-forward、
+安装生产依赖并重启服务；tracked 文件有本地修改或分支发生分叉时会拒绝自动覆盖。
+
+```bash
+systemctl --user status minecraft-idle-bot-update.timer
+journalctl --user -u minecraft-idle-bot-update.service -n 50
+```
+
 ## 资源边界
 
 服务器发来的区块包仍必须经过底层协议解压和反序列化，但本项目不注册世界处理器，
