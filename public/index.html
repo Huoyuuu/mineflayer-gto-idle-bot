@@ -1,109 +1,25 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light">
-<title>Idle Bot · 世界视图</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%231c1917'/><rect x='4' y='4' width='8' height='8' rx='1' fill='%23faf9f7'/></svg>">
-<link rel="stylesheet" href="/app.css">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Idle Bot</title>
+  <script src="https://cdn.tailwindcss.com"></script><script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>html,body{margin:0;background:#fafaf9;color:#292524;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}*{box-sizing:border-box}.chat{scrollbar-width:thin}.dot{width:8px;height:8px;border-radius:50%;display:inline-block}</style>
 </head>
-<body>
-<main class="shell">
-
-  <aside class="panel rail">
-    <header class="rail-head">
-      <div class="eyebrow">minimal presence</div>
-      <h1>Idle Bot</h1>
-      <div class="phase"><span id="phase-dot" class="dot"></span><span id="phase-text">offline</span></div>
-      <p id="phase-note" class="note"></p>
-    </header>
-
-    <section class="block">
-      <div class="eyebrow">vitals</div>
-      <div class="meter"><span class="meter-label">生命</span><div class="bar"><i id="health-bar" class="fill health"></i></div><span id="health-text" class="meter-value">--</span></div>
-      <div class="meter"><span class="meter-label">饥饿</span><div class="bar"><i id="food-bar" class="fill food"></i></div><span id="food-text" class="meter-value">--</span></div>
-    </section>
-
-    <section class="block">
-      <div class="eyebrow">telemetry</div>
-      <dl id="info" class="info"></dl>
-    </section>
-
-    <section class="block">
-      <div class="eyebrow">hotbar</div>
-      <div id="hotbar" class="hotbar"></div>
-      <div id="held-item" class="held-item"></div>
-      <div id="inventory" class="inventory"></div>
-    </section>
-
-    <section class="block">
-      <div class="eyebrow">actions</div>
-      <div class="actions">
-        <button id="return-p0" type="button">回到初始位置 P0</button>
-        <button id="empty-silencer" type="button">清空消声仓到箱子</button>
-      </div>
-      <p id="action-note" class="note"></p>
-    </section>
-  </aside>
-
-  <section class="panel stage">
-    <div class="toolbar">
-      <div class="toolbar-main">
-        <span class="eyebrow">world</span>
-        <strong id="world-name">--</strong>
-        <span id="world-clock" class="chip"></span>
-        <span id="world-chunks" class="chip subtle"></span>
-      </div>
-      <div class="toolbar-tools">
-        <label class="tool"><span>层高 Y</span><input id="ceiling" type="range" min="-64" max="320" step="1" value="120"><output id="ceiling-value">--</output></label>
-        <label class="tool"><span>范围</span><select id="radius"><option value="12">12</option><option value="20" selected>20</option><option value="32">32</option><option value="48">48</option></select></label>
-        <button id="rotate" class="ghost" type="button" title="旋转视角 (R)">⟳</button>
-        <button id="recenter" class="ghost" type="button" title="回到 Bot 视角">⌖</button>
-      </div>
-    </div>
-
-    <div class="viewport">
-      <canvas id="map" tabindex="0" aria-label="世界等距视图"></canvas>
-      <div id="control-badge" class="badge">点击画布接管控制</div>
-      <div id="tooltip" class="tooltip" hidden></div>
-      <div class="legend">
-        <div><b>左键</b> 选中 · <b>拖动</b> 平移 · <b>滚轮</b> 缩放 · <b>R</b> 旋转</div>
-        <div><b>右键/双击</b> 使用 · <b>Shift+双击</b> 立即挖掘 · <b>Esc</b> 释放控制</div>
-      </div>
-      <div id="keycaps" class="keycaps">
-        <span data-key="KeyQ">Q</span><span data-key="KeyW">W</span><span data-key="KeyE">E</span>
-        <span data-key="KeyA">A</span><span data-key="KeyS">S</span><span data-key="KeyD">D</span>
-        <span data-key="Space" class="wide">Space</span><span data-key="ShiftLeft">Shift</span><span data-key="ControlLeft">Ctrl</span>
-      </div>
-    </div>
-
-    <div class="statusbar">
-      <span id="selection">未选中方块</span>
-      <span id="world-state" class="subtle"></span>
-    </div>
+<body><main class="mx-auto flex min-h-screen max-w-5xl flex-col gap-4 p-4 sm:p-8">
+  <header class="flex items-center justify-between border-b border-stone-200 pb-4"><div><p class="text-xs uppercase tracking-widest text-stone-500">minimal presence</p><h1 class="text-xl font-semibold">Idle Bot</h1></div><div id="phase" class="text-sm text-stone-500"><span class="dot bg-stone-400"></span> offline</div></header>
+  <section class="grid gap-4 md:grid-cols-[240px_1fr]">
+    <aside class="border border-stone-200 bg-white p-4"><h2 class="mb-3 text-xs uppercase tracking-wider text-stone-500">bot info</h2><dl id="info" class="space-y-2 text-sm"></dl></aside>
+    <section class="flex min-h-[560px] flex-col border border-stone-200 bg-white"><div class="flex h-12 items-center justify-between border-b border-stone-200 px-4"><span class="text-xs uppercase tracking-wider text-stone-500">chat</span><div class="flex items-center gap-2"><button id="newer" class="grid h-8 w-8 place-items-center border border-stone-200 text-stone-600 disabled:opacity-30" type="button" title="较新一页" disabled><i data-lucide="chevron-left" class="h-4 w-4"></i></button><span id="page" class="min-w-14 text-center text-xs text-stone-500">第 1 页</span><button id="older" class="grid h-8 w-8 place-items-center border border-stone-200 text-stone-600 disabled:opacity-30" type="button" title="较早一页" disabled><i data-lucide="chevron-right" class="h-4 w-4"></i></button></div></div><div id="chat" class="chat flex-1 space-y-2 overflow-y-auto p-4 text-sm"></div><form id="form" class="flex gap-2 border-t border-stone-200 p-3"><input id="message" maxlength="256" autocomplete="off" class="min-w-0 flex-1 border border-stone-300 bg-stone-50 px-3 py-2 outline-none focus:border-stone-700" placeholder="发送消息"><button class="grid h-10 w-10 shrink-0 place-items-center border border-stone-800 bg-stone-800 text-white hover:bg-stone-700" type="submit" title="发送"><i data-lucide="send" class="h-4 w-4"></i></button></form></section>
   </section>
-
-  <aside class="panel chat-panel">
-    <div class="chat-head">
-      <div class="eyebrow">chat</div>
-      <div class="chat-head-tools">
-        <span id="chat-total" class="chip subtle"></span>
-        <button id="load-older" class="ghost" type="button" hidden>加载更早</button>
-      </div>
-    </div>
-    <div id="chat" class="chat"></div>
-    <button id="jump-latest" class="jump" type="button" hidden>↓ 回到最新</button>
-    <form id="chat-form" class="chat-form" autocomplete="off">
-      <input id="message" maxlength="256" placeholder="发送消息 / 指令" aria-label="发送消息">
-      <button type="submit" title="发送">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg>
-      </button>
-    </form>
-  </aside>
-
-</main>
-<script src="/view-math.js"></script>
-<script src="/app.js"></script>
-</body>
-</html>
+</main><script>
+const $=s=>document.querySelector(s), phase=$('#phase'), info=$('#info'), chat=$('#chat');let pageNumber=1,currentBefore=null,pageData=null,newerCursors=[]
+const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))
+function render(s){const online=s.connected;phase.innerHTML=`<span class="dot ${online?'bg-emerald-500':s.phase==='reconnecting'?'bg-amber-500':'bg-stone-400'}"></span> ${esc(s.phase)}`;info.innerHTML=[['name',s.username],['server',`${s.host}:${s.port}`],['world',s.world||'--'],['health',s.health==null?'--':`${s.health} / 20`],['food',s.food==null?'--':s.food],['position',s.position?`${s.position.x.toFixed(2)}, ${s.position.y.toFixed(2)}, ${s.position.z.toFixed(2)}`:'--'],['packets',s.packets],['retries',s.reconnects],['next retry',s.nextReconnectAt?new Date(s.nextReconnectAt).toLocaleTimeString():'--'],['uptime',`${s.uptime}s`]].map(([k,v])=>`<div class="flex justify-between gap-3"><dt class="text-stone-500">${k}</dt><dd class="text-right">${esc(v)}</dd></div>`).join('')}
+function renderChat(data){pageData=data;chat.innerHTML=data.items.length?data.items.map(m=>`<div class="leading-6"><span class="text-stone-400">${new Date(m.at).toLocaleString()}</span> <b class="font-medium">${esc(m.sender)}</b> <span>${esc(m.text)}</span></div>`).join(''):'<div class="py-10 text-center text-stone-400">暂无消息</div>';$('#page').textContent=`第 ${pageNumber} 页`;$('#newer').disabled=pageNumber===1;$('#older').disabled=!data.hasOlder;chat.scrollTop=chat.scrollHeight}
+async function loadChat(before=currentBefore){const query=before==null?'':'?before='+encodeURIComponent(before);const response=await fetch('/api/chat'+query);if(response.ok)renderChat(await response.json())}
+$('#older').onclick=()=>{if(!pageData?.hasOlder)return;newerCursors.push(currentBefore);currentBefore=pageData.nextBefore;pageNumber++;loadChat()}
+$('#newer').onclick=()=>{if(pageNumber===1)return;currentBefore=newerCursors.pop()??null;pageNumber--;loadChat()}
+fetch('/api/state').then(r=>r.json()).then(render);loadChat();const events=new EventSource('/events');events.addEventListener('state',e=>render(JSON.parse(e.data)));events.addEventListener('chat',()=>{if(pageNumber===1)loadChat(null)});lucide.createIcons();
+$('#form').onsubmit=async e=>{e.preventDefault();const input=$('#message'),message=input.value.trim();if(!message)return;const r=await fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message})});if(r.ok)input.value='';else alert((await r.json()).error)}
+</script></body></html>
