@@ -1,0 +1,10 @@
+[Unit]
+Description=Update and deploy Minecraft idle bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/huoyuuu/services/minecraft-idle-bot
+Environment=DEPLOY_BRANCH=server-live
+ExecStart=/usr/bin/bash /home/huoyuuu/services/minecraft-idle-bot/scripts/update-and-deploy.sh

@@ -169,3 +169,20 @@ serializer 的约 790 KiB 配方包，原版 `minecraft-protocol` schema 读偏�
 另外新增 `npm run preview`：用合成世界（山丘、水塘、砖房、灯笼）启动真实页面，
 **不连接 Minecraft 服务器**，因此改 UI 时不会和线上 Bot 抢登录。本次改动就是这样验收的：
 `/api/world` 返回的地形栅格、层高切片、挖掘/使用校验、gzip 均已实际跑通。
+
+## 2026-07-26 Push 后未自动部署的修复
+
+### 根因
+
+服务器的 `.githooks/post-merge` 和 `scripts/deploy.sh` 都能正常工作，但它们只会在服务器
+主动执行 `git pull` 后运行。服务器没有 cron、systemd timer 或 webhook，GitHub 上也没有
+部署 workflow。因此 push 后 GitHub 已到 `a328ce2`，服务器仍停在 `96d15bb`。
+
+### 修复
+
+- 新增 `minecraft-idle-bot-update.timer`，每分钟检查一次 `origin/server-live`。
+- 新增 `scripts/update-and-deploy.sh`，只接受干净工作树上的 fast-forward 更新，拒绝分支错误、
+  本地 tracked 修改和历史分叉，避免无人值守更新覆盖服务器内容。
+- 更新部署脚本，使其安装并启用 updater service/timer，同时确保 `core.hooksPath=.githooks`。
+- updater 明确调用部署脚本，因此依赖安装或 systemd 重启失败会记录为 unit failure；人工
+  `git pull` 仍保留原来的 post-merge 自动部署行为。

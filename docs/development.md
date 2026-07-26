@@ -132,3 +132,22 @@ git config core.hooksPath .githooks
 
 After that, `git pull` invokes `.githooks/post-merge`, which runs `scripts/deploy.sh` to
 install production dependencies, refresh the user unit, and restart the service.
+
+## Unattended Push Deployment
+
+The previous hook automated only the second half of deployment: it ran after somebody executed
+`git pull` on the server. It did not provide a GitHub push trigger. The live server therefore
+remained at `96d15bb` after GitHub advanced `server-live` to `a328ce2` on 2026-07-26.
+
+`minecraft-idle-bot-update.timer` now runs once per minute. Its oneshot service calls
+`scripts/update-and-deploy.sh`, which fetches only `server-live`, rejects tracked local changes or
+diverged history, fast-forwards the checkout, and runs `scripts/deploy.sh`. The merge suppresses
+`post-merge` because the updater invokes deployment explicitly and must surface deployment errors
+as a failed systemd unit. Manual `git pull` continues to deploy through the tracked hook.
+
+Inspect the unattended path with:
+
+```bash
+systemctl --user status minecraft-idle-bot-update.timer
+journalctl --user -u minecraft-idle-bot-update.service -n 50
+```
