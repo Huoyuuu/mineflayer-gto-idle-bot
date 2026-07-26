@@ -17,6 +17,7 @@ test('textOf flattens chat components without HTML', () => {
 
 test('textOf preserves separators in translated chat components', () => {
   assert.equal(textOf({ translate: '%s/%s', with: [{ text: '1' }, { text: '20' }] }), '1/20')
+  assert.equal(textOf({ translate: 'commands.list.players', with: ['1', '20', 'huoyuuu_bot'] }), '1/20 huoyuuu_bot')
 })
 
 test('sendChat waits for the server echo instead of adding a duplicate', () => {

@@ -7,6 +7,10 @@ const EventEmitter = require('node:events')
 const mc = require('minecraft-protocol')
 const { config } = require('./config')
 const ChatMessage = require('prismarine-chat')(config.mcVersion)
+const CHAT_LANGUAGE = {
+  ...require('minecraft-data')(config.mcVersion).language,
+  'commands.list.players': '%s/%s %s'
+}
 const { installForge3 } = require('./forge3')
 
 const RECONNECT_DELAYS = [
@@ -46,7 +50,7 @@ function textOf (component) {
     if (typeof component === 'string') {
       try { value = JSON.parse(component) } catch { return new ChatMessage(component).toString() }
     }
-    return new ChatMessage(value).toString()
+    return new ChatMessage(value).toString(CHAT_LANGUAGE)
   } catch { return typeof component === 'string' ? component : String(component) }
 }
 
