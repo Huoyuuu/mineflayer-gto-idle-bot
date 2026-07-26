@@ -8,7 +8,7 @@ const { clamp, rotatedIndex, toRotated, colorFor, rgb, keyIntent, gameClock, com
 const $ = selector => document.querySelector(selector)
 const esc = value => String(value ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 const fixed = (value, digits = 1) => (Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : '--')
-const shortName = name => String(name).replace(/^minecraft:/, '').replace(/_/g, ' ').slice(0, 12)
+const itemName = name => String(name).replace(/^minecraft:/, '').replace(/_/g, ' ')
 
 const canvas = $('#map')
 const ctx = canvas.getContext('2d')
@@ -84,7 +84,9 @@ function renderState (state) {
 
   $('#world-name').textContent = state.world || state.dimension || '--'
   $('#world-clock').textContent = state.timeOfDay == null ? '' : `Day ${state.dayCount ?? 0} · ${gameClock(state.timeOfDay)}`
-  $('#world-chunks').textContent = stats.chunks ? `${stats.chunks} chunks · ${stats.sections || 0} sections` : ''
+  $('#world-chunks').textContent = stats.chunks
+    ? `${stats.chunks} chunks · ${stats.sections || 0} sections`
+    : stats.lastError ? '区块解码失败' : '等待区块'
 
   if (!controlling && state.look) look = { ...state.look }
   if (state.position) {
@@ -100,13 +102,18 @@ function renderInventory (state) {
   $('#hotbar').innerHTML = Array.from({ length: 9 }, (_, slot) => {
     const item = hotbar.get(slot)
     const held = slot === state.heldSlot ? 'held' : ''
-    const label = item ? `<b>${esc(shortName(item.name))}</b>×${item.count}` : '·'
-    return `<button type="button" class="${held}" data-slot="${slot}" title="${esc(item ? item.name : '空槽位')}">${label}</button>`
+    const label = item ? esc(item.count) : '·'
+    const title = item ? `${itemName(item.name)} ×${item.count}` : '空槽位'
+    return `<button type="button" class="${held}" data-slot="${slot}" title="${esc(title)}" aria-label="${esc(title)}">${label}</button>`
   }).join('')
+  const heldItem = hotbar.get(state.heldSlot)
+  $('#held-item').textContent = heldItem ? `${itemName(heldItem.name)} ×${heldItem.count}` : '手中为空'
   const backpack = inventory.filter(item => item.hotbar == null && item.slot >= 9)
-  $('#inventory').textContent = backpack.length
-    ? backpack.map(item => `${shortName(item.name)}×${item.count}`).join(' · ')
-    : '背包为空'
+  const grouped = new Map()
+  for (const item of backpack) grouped.set(item.name, (grouped.get(item.name) || 0) + item.count)
+  $('#inventory').innerHTML = grouped.size
+    ? [...grouped].map(([name, count]) => `<div title="${esc(itemName(name))}"><span>${esc(itemName(name))}</span><b>×${count}</b></div>`).join('')
+    : '<div><span>背包为空</span></div>'
 }
 
 setInterval(() => { if (botState?.nextReconnectAt) renderState(botState) }, 1000)
@@ -150,7 +157,11 @@ async function fetchWorld () {
       ? `Y ≤ ${data.ceiling} · ${data.size}×${data.size} · ${data.palette.length} 种方块`
       : data.error || '世界数据不可用'
     draw()
-  } catch { /* the SSE stream triggers the next attempt */ } finally {
+  } catch (error) {
+    world = null
+    $('#world-state').textContent = `世界数据加载失败 · ${error.message}`
+    draw()
+  } finally {
     worldInFlight = false
     if (worldPending) { worldPending = false; setTimeout(fetchWorld, 300) }
   }
@@ -208,6 +219,11 @@ function paint () {
       drawColumn(point, tile, color, shade, leftDrop, rightDrop)
       cells.push({ x: point.x, y: point.y, tile, name, height: node.height, world: cellToWorld(node.ix, node.iz) })
     }
+  }
+
+  if (cells.length === 0) {
+    const error = botState?.worldStats?.lastError
+    return drawPlaceholder(width, height, error ? `区块解码失败 · ${error}` : '当前范围没有可显示的方块')
   }
 
   drawMarkers(project, center, tile)
@@ -294,11 +310,11 @@ function outline (block, color, width) {
   ctx.lineWidth = 1
 }
 
-function drawPlaceholder (width, height) {
+function drawPlaceholder (width, height, message) {
   ctx.fillStyle = '#a8a29e'
   ctx.font = '12px ui-monospace, monospace'
   ctx.textAlign = 'center'
-  ctx.fillText(botState?.phase === 'play' ? '正在接收区块数据…' : 'Bot 离线，暂无世界数据', width / 2, height / 2)
+  ctx.fillText(message || (botState?.phase === 'play' ? '正在接收区块数据…' : 'Bot 离线，暂无世界数据'), width / 2, height / 2)
   ctx.textAlign = 'start'
 }
 

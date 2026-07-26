@@ -33,8 +33,15 @@ test('decodeChunkColumn round-trips single-valued, indirect and direct palettes'
 
 test('decodeChunkColumn rejects a column that does not consume the whole buffer', () => {
   const buffer = Buffer.concat([buildColumn(2, new Map()), Buffer.from([0x00])])
-  assert.throws(() => decodeChunkColumn(buffer, 2), /trailing bytes/)
+  assert.throws(() => decodeChunkColumn(buffer, 2), /underrun|invalid|unsupported/)
   assert.throws(() => decodeChunkColumn(buffer, 4), /underrun|invalid|unsupported/)
+})
+
+test('decodeChunkColumn accepts complete Forge sections beyond the codec height', () => {
+  const extended = buildColumn(25, new Map())
+  assert.equal(decodeChunkColumn(extended, 24).length, 25)
+  assert.throws(() => decodeChunkColumn(extended.subarray(0, extended.length - 1), 24), /underrun|invalid/)
+  assert.throws(() => decodeChunkColumn(Buffer.concat([buildColumn(24, new Map()), Buffer.alloc(12, 0xff)]), 24), /unsupported|invalid/)
 })
 
 test('WorldStore keeps only chunks inside the radius and reports its own footprint', () => {
@@ -52,6 +59,16 @@ test('WorldStore keeps only chunks inside the radius and reports its own footpri
   assert.equal(stats.chunks, 3)
   assert.equal(stats.sections, 3)
   assert.equal(stats.bytes, 3 * 4096 * 2)
+})
+
+test('WorldStore adopts one inferred section span and rejects later mismatches', () => {
+  const store = new WorldStore({ radius: 2 })
+  store.reset('minecraft:overworld', { minY: -64, height: 64 })
+  assert.equal(store.loadColumn(0, 0, buildColumn(5, new Map())), true)
+  assert.equal(store.sectionCount, 5)
+  assert.equal(store.height, 80)
+  assert.equal(store.loadColumn(1, 0, buildColumn(6, new Map())), false)
+  assert.match(store.lastError, /section count changed/)
 })
 
 test('WorldStore resolves blocks, edits and the ground level', () => {
@@ -117,4 +134,9 @@ test('dimensionBounds reads the login codec and falls back to overworld limits',
   assert.deepEqual(dimensionBounds(codec, 'minecraft:the_nether'), { minY: 0, height: 256 })
   assert.deepEqual(dimensionBounds(codec, 'unknown:dimension'), DEFAULT_BOUNDS)
   assert.deepEqual(dimensionBounds(null, 'minecraft:overworld'), DEFAULT_BOUNDS)
+})
+
+test('dimensionBounds reads the real 1.20.1 registry codec shape', () => {
+  const codec = require('minecraft-data')('1.20.1').loginPacket.dimensionCodec
+  assert.deepEqual(dimensionBounds(codec, 'minecraft:overworld'), { minY: -64, height: 384 })
 })

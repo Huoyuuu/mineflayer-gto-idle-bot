@@ -151,3 +151,17 @@ Inspect the unattended path with:
 systemctl --user status minecraft-idle-bot-update.timer
 journalctl --user -u minecraft-idle-bot-update.service -n 50
 ```
+
+## Forge Section Span Compatibility
+
+The live Forge server sends one more complete chunk section than its dimension codec declares
+(`25` decoded versus `24` expected). The old exact-length check therefore rejected every column
+with 12 trailing bytes. `decodeChunkColumn` now continues through at most 16 additional complete
+sections while keeping the exact EOF invariant. The first successful column fixes the effective
+span for that dimension; later columns with a different count are rejected. `worldStats` exposes
+`expectedSections` and `decodedSections` for diagnosis.
+
+The inventory UI groups identical backpack stacks, constrains the list height, and shows only stack
+counts in the nine narrow hotbar cells. Full item names remain available in the selected-item line
+and native tooltips. An empty or failed world slice now renders an explicit Canvas status instead
+of a blank surface.

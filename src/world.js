@@ -20,6 +20,8 @@ const BIOME_VOLUME = 64
 const MAX_BLOCK_INDIRECT_BITS = 8
 const MAX_BIOME_INDIRECT_BITS = 3
 const MAX_BITS = 16
+const MAX_SECTION_COUNT = 64
+const MAX_EXTRA_SECTIONS = 16
 const DEFAULT_BOUNDS = { minY: -64, height: 384 }
 const NO_DATA = -1
 const EMPTY_COLUMN = -2
@@ -116,10 +118,20 @@ function decodeSection (reader) {
 // The buffer must be consumed exactly: a misaligned decode almost never lands on the
 // last byte, so this doubles as a self-check before anything is stored.
 function decodeChunkColumn (buffer, sectionCount) {
+  if (!Number.isInteger(sectionCount) || sectionCount < 1 || sectionCount > MAX_SECTION_COUNT) {
+    throw new Error(`invalid section count: ${sectionCount}`)
+  }
   const reader = new Reader(buffer)
   const sections = []
   for (let index = 0; index < sectionCount; index++) sections.push(decodeSection(reader))
-  if (reader.remaining !== 0) throw new Error(`chunk buffer has ${reader.remaining} trailing bytes`)
+  // Some Forge dimension codecs under-report the actual section span. Accept only
+  // trailing bytes that form complete sections; malformed tails still fail decoding.
+  while (reader.remaining > 0) {
+    if (sections.length >= sectionCount + MAX_EXTRA_SECTIONS || sections.length >= MAX_SECTION_COUNT) {
+      throw new Error(`too many chunk sections: more than ${sections.length}`)
+    }
+    sections.push(decodeSection(reader))
+  }
   return sections
 }
 
@@ -150,6 +162,8 @@ class WorldStore {
     this.dimension = null
     this.minY = DEFAULT_BOUNDS.minY
     this.height = DEFAULT_BOUNDS.height
+    this.declaredHeight = DEFAULT_BOUNDS.height
+    this.decodedSectionCount = null
     this.revision = 0
     this.center = null
     this.errors = 0
@@ -157,7 +171,7 @@ class WorldStore {
   }
 
   get sectionCount () {
-    return Math.ceil(this.height / 16)
+    return this.decodedSectionCount ?? Math.ceil(this.declaredHeight / 16)
   }
 
   reset (dimension, bounds = {}) {
@@ -165,7 +179,9 @@ class WorldStore {
     this.center = null
     this.dimension = dimension ?? this.dimension
     this.minY = Number.isInteger(bounds.minY) ? bounds.minY : DEFAULT_BOUNDS.minY
-    this.height = Number.isInteger(bounds.height) ? bounds.height : DEFAULT_BOUNDS.height
+    this.declaredHeight = Number.isInteger(bounds.height) ? bounds.height : DEFAULT_BOUNDS.height
+    this.height = this.declaredHeight
+    this.decodedSectionCount = null
     this.revision++
   }
 
@@ -203,12 +219,21 @@ class WorldStore {
     if (this.center && Math.max(Math.abs(chunkX - this.center.x), Math.abs(chunkZ - this.center.z)) > this.radius) return false
     let sections
     try {
-      sections = decodeChunkColumn(buffer, this.sectionCount)
+      const expectedSections = this.sectionCount
+      sections = decodeChunkColumn(buffer, expectedSections)
+      if (this.decodedSectionCount != null && sections.length !== this.decodedSectionCount) {
+        throw new Error(`chunk section count changed from ${this.decodedSectionCount} to ${sections.length}`)
+      }
     } catch (error) {
       this.errors++
       this.lastError = error.message
       return false
     }
+    if (this.decodedSectionCount == null) {
+      this.decodedSectionCount = sections.length
+      this.height = sections.length * 16
+    }
+    this.lastError = null
     this.chunks.set(chunkKey(chunkX, chunkZ), sections)
     this.evict()
     this.revision++
@@ -336,7 +361,15 @@ class WorldStore {
         bytes += section.values.byteLength
       }
     }
-    return { chunks: this.chunks.size, sections, bytes, errors: this.errors, lastError: this.lastError }
+    return {
+      chunks: this.chunks.size,
+      sections,
+      bytes,
+      errors: this.errors,
+      lastError: this.lastError,
+      expectedSections: Math.ceil(this.declaredHeight / 16),
+      decodedSections: this.decodedSectionCount
+    }
   }
 }
 
