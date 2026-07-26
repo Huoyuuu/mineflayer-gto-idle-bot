@@ -6,7 +6,7 @@
 - `src/forge3.js`: 从参考 GTO 项目复用的 Forge 1.20.1 FML3 登录握手；不要删除。
 - `src/server.js`: Node 内置 HTTP、SSE 状态/聊天推送、聊天 GET 分页和 POST；端口从 `WEB_PORT` 自动递增。
 - `src/chat-store.js`: 追加式 JSONL 聊天存储；内存只保留每行的 byte offset，页面按 cursor 读连续字节范围。
-- `public/index.html`: 单文件纸白界面，Tailwind utility classes 与 Lucide send icon。
+- `public/index.html`: 单文件三栏纸白界面：左状态/背包/动作，中间浏览器 Canvas GUI，右聊天。
 
 ## Invariants
 
@@ -18,6 +18,7 @@
 - play 阶段协议解析错误必须终止 socket，90 秒无包 watchdog 是假在线的最后保护。
 - `.env` 不得提交；网页默认仅绑定 loopback。
 - `.minecraft-idle-bot.chat.jsonl` 和 `.minecraft-idle-bot.cooldown` 是运行数据，必须持久保留且不得提交。
+- 中间 GUI 的等距网格、选框、拖拽/滚轮相机全部在浏览器端执行；服务端不保存渲染缓存，目标坐标仅在交互请求时发送。
 
 ## Verification
 
