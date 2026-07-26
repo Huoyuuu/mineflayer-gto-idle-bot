@@ -22,6 +22,7 @@ const MAX_BIOME_INDIRECT_BITS = 3
 const MAX_BITS = 16
 const MAX_SECTION_COUNT = 64
 const MAX_EXTRA_SECTIONS = 16
+const FORGE_ZERO_PADDING_BYTES = 12
 const DEFAULT_BOUNDS = { minY: -64, height: 384 }
 const NO_DATA = -1
 const EMPTY_COLUMN = -2
@@ -125,17 +126,18 @@ function decodeChunkColumn (buffer, sectionCount) {
   const sections = []
   for (let index = 0; index < sectionCount; index++) sections.push(decodeSection(reader))
   const extensionOffset = reader.offset
+  if (reader.remaining === FORGE_ZERO_PADDING_BYTES && buffer.subarray(reader.offset).every(byte => byte === 0)) {
+    Object.defineProperty(sections, 'paddingBytes', { value: reader.remaining })
+    reader.offset = buffer.length
+  }
   // Some Forge dimension codecs under-report the actual section span. Accept only
   // trailing bytes that form complete sections; malformed tails still fail decoding.
   while (reader.remaining > 0) {
     if (sections.length >= sectionCount + MAX_EXTRA_SECTIONS || sections.length >= MAX_SECTION_COUNT) {
       throw new Error(`too many chunk sections: more than ${sections.length}`)
     }
-    try {
-      sections.push(decodeSection(reader))
-    } catch (error) {
-      const extension = buffer.subarray(extensionOffset, Math.min(buffer.length, extensionOffset + 32)).toString('hex')
-      throw new Error(`chunk extension ${buffer.length - extensionOffset} bytes (${extension}): ${error.message}`)
+    try { sections.push(decodeSection(reader)) } catch (error) {
+      throw new Error(`invalid ${buffer.length - extensionOffset}-byte chunk extension: ${error.message}`)
     }
   }
   return sections
@@ -170,6 +172,7 @@ class WorldStore {
     this.height = DEFAULT_BOUNDS.height
     this.declaredHeight = DEFAULT_BOUNDS.height
     this.decodedSectionCount = null
+    this.paddingBytes = null
     this.revision = 0
     this.center = null
     this.errors = 0
@@ -188,6 +191,7 @@ class WorldStore {
     this.declaredHeight = Number.isInteger(bounds.height) ? bounds.height : DEFAULT_BOUNDS.height
     this.height = this.declaredHeight
     this.decodedSectionCount = null
+    this.paddingBytes = null
     this.revision++
   }
 
@@ -238,6 +242,12 @@ class WorldStore {
     if (this.decodedSectionCount == null) {
       this.decodedSectionCount = sections.length
       this.height = sections.length * 16
+    }
+    if (this.paddingBytes == null) this.paddingBytes = sections.paddingBytes ?? 0
+    if ((sections.paddingBytes ?? 0) !== this.paddingBytes) {
+      this.errors++
+      this.lastError = `chunk padding changed from ${this.paddingBytes} to ${sections.paddingBytes ?? 0} bytes`
+      return false
     }
     this.lastError = null
     this.chunks.set(chunkKey(chunkX, chunkZ), sections)
@@ -374,7 +384,8 @@ class WorldStore {
       errors: this.errors,
       lastError: this.lastError,
       expectedSections: Math.ceil(this.declaredHeight / 16),
-      decodedSections: this.decodedSectionCount
+      decodedSections: this.decodedSectionCount,
+      paddingBytes: this.paddingBytes
     }
   }
 }

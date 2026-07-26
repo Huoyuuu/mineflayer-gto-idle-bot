@@ -189,10 +189,10 @@ serializer 的约 790 KiB 配方包，原版 `minecraft-protocol` schema 读偏�
 
 ## 2026-07-26 线上交互界面修复
 
-- 线上世界空白并非 Canvas 尺寸问题。`/api/state` 显示 98 次区块解码失败，每列都剩余
-  12 字节；Forge 实际发送 25 个完整 section，而维度 codec 声明 24 个。
-- 解码器现在只接受能够继续严格解析到 EOF 的额外完整 section，并限制最多额外 16 个；
-  随机尾巴、截断 section 和不同列的 section 数不一致仍会拒绝。
+- 线上世界空白并非 Canvas 尺寸问题。`/api/state` 显示 98 次区块解码失败；线上采样确认
+  每列在 24 个标准 section 后固定追加 12 个全零字节，并不是额外完整 section。
+- 解码器只兼容这个精确的零填充形状，也支持能够继续严格解析到 EOF 的额外完整 section；
+  非零尾巴、不同长度、截断 section 以及不同列的 section 数或填充变化仍会拒绝。
 - `worldStats` 新增预期/实际 section 数，空切片和请求异常会在 Canvas 上显示明确原因。
 - hotbar 改为格内只显示堆叠数量，完整物品名显示在下方并保留 tooltip；背包相同物品聚合，
   列表限制高度并使用省略号，避免大量 `iron_ingot` 撑坏整个左栏。

@@ -154,12 +154,13 @@ journalctl --user -u minecraft-idle-bot-update.service -n 50
 
 ## Forge Section Span Compatibility
 
-The live Forge server sends one more complete chunk section than its dimension codec declares
-(`25` decoded versus `24` expected). The old exact-length check therefore rejected every column
-with 12 trailing bytes. `decodeChunkColumn` now continues through at most 16 additional complete
-sections while keeping the exact EOF invariant. The first successful column fixes the effective
-span for that dimension; later columns with a different count are rejected. `worldStats` exposes
-`expectedSections` and `decodedSections` for diagnosis.
+The live Forge server appends exactly 12 zero bytes after the 24 sections declared by its dimension
+codec. The old exact-length check therefore rejected every column. The decoder accepts only that
+exact observed padding shape; different lengths or any non-zero padding still fail. It can also
+continue through at most 16 additional complete sections while keeping the exact EOF invariant.
+The first successful column fixes the effective span and padding for that dimension; later columns
+with different values are rejected. `worldStats` exposes `expectedSections`, `decodedSections`, and
+`paddingBytes` for diagnosis.
 
 The inventory UI groups identical backpack stacks, constrains the list height, and shows only stack
 counts in the nine narrow hotbar cells. Full item names remain available in the selected-item line

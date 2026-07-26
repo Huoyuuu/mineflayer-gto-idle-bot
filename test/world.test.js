@@ -44,6 +44,14 @@ test('decodeChunkColumn accepts complete Forge sections beyond the codec height'
   assert.throws(() => decodeChunkColumn(Buffer.concat([buildColumn(24, new Map()), Buffer.alloc(12, 0xff)]), 24), /unsupported|invalid/)
 })
 
+test('decodeChunkColumn accepts only the observed 12-byte Forge zero padding', () => {
+  const padded = decodeChunkColumn(Buffer.concat([buildColumn(24, new Map()), Buffer.alloc(12)]), 24)
+  assert.equal(padded.length, 24)
+  assert.equal(padded.paddingBytes, 12)
+  assert.throws(() => decodeChunkColumn(Buffer.concat([buildColumn(24, new Map()), Buffer.alloc(4)]), 24), /extension|underrun/)
+  assert.throws(() => decodeChunkColumn(Buffer.concat([buildColumn(24, new Map()), Buffer.alloc(12, 1)]), 24), /extension|unsupported|invalid/)
+})
+
 test('WorldStore keeps only chunks inside the radius and reports its own footprint', () => {
   const store = new WorldStore({ radius: 1, maxChunks: 96 })
   store.reset('minecraft:overworld', { minY: 0, height: 64 })
