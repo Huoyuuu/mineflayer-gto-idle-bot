@@ -124,13 +124,19 @@ function decodeChunkColumn (buffer, sectionCount) {
   const reader = new Reader(buffer)
   const sections = []
   for (let index = 0; index < sectionCount; index++) sections.push(decodeSection(reader))
+  const extensionOffset = reader.offset
   // Some Forge dimension codecs under-report the actual section span. Accept only
   // trailing bytes that form complete sections; malformed tails still fail decoding.
   while (reader.remaining > 0) {
     if (sections.length >= sectionCount + MAX_EXTRA_SECTIONS || sections.length >= MAX_SECTION_COUNT) {
       throw new Error(`too many chunk sections: more than ${sections.length}`)
     }
-    sections.push(decodeSection(reader))
+    try {
+      sections.push(decodeSection(reader))
+    } catch (error) {
+      const extension = buffer.subarray(extensionOffset, Math.min(buffer.length, extensionOffset + 32)).toString('hex')
+      throw new Error(`chunk extension ${buffer.length - extensionOffset} bytes (${extension}): ${error.message}`)
+    }
   }
   return sections
 }
