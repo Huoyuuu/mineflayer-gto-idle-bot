@@ -69,6 +69,7 @@ class LightBot extends EventEmitter {
   constructor (options = {}) {
     super()
     this.options = { ...config, ...options }
+    this.cooldownFile = options.cooldownFile || COOLDOWN_FILE
     this.client = null
     this.socket = null
     this.timer = null
@@ -132,18 +133,18 @@ class LightBot extends EventEmitter {
   }
   readCooldown () {
     try {
-      const value = Number.parseInt(fs.readFileSync(COOLDOWN_FILE, 'utf8').trim(), 10)
+      const value = Number.parseInt(fs.readFileSync(this.cooldownFile, 'utf8').trim(), 10)
       return Number.isFinite(value) ? value : 0
     } catch { return 0 }
   }
   clearCooldown () {
-    try { fs.unlinkSync(COOLDOWN_FILE) } catch (error) { if (error.code !== 'ENOENT') console.error(`[bot] cannot clear cooldown: ${error.message}`) }
+    try { fs.unlinkSync(this.cooldownFile) } catch (error) { if (error.code !== 'ENOENT') console.error(`[bot] cannot clear cooldown: ${error.message}`) }
   }
   enterCooldown (reason, trigger = `${MAX_CONSECUTIVE_RECONNECTS + 1} consecutive reconnects reached`) {
     clearTimeout(this.timer); clearTimeout(this.loginTimer); clearTimeout(this.stableTimer); clearInterval(this.livenessTimer)
     this.timer = this.loginTimer = this.stableTimer = this.livenessTimer = null
     const until = Date.now() + COOLDOWN_MS
-    try { fs.writeFileSync(COOLDOWN_FILE, `${until}\n`, { mode: 0o600 }) } catch (error) { console.error(`[bot] cannot persist cooldown: ${error.message}`) }
+    try { fs.writeFileSync(this.cooldownFile, `${until}\n`, { mode: 0o600 }) } catch (error) { console.error(`[bot] cannot persist cooldown: ${error.message}`) }
     this.cooldownUntil = until
     this.state.phase = 'cooldown'; this.state.connected = false
     this.state.cooldownUntil = new Date(until).toISOString()

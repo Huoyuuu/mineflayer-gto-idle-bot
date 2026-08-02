@@ -111,3 +111,11 @@ The application is intentionally restored to commit `b513e7e`: status plus pagin
 Do not assume the removed world view, inventory, movement, block interaction, action endpoints, or
 preview server still exist. The updater timer remains newer infrastructure and is intentionally
 retained; it is independent of the application UI.
+
+## Dred Login Diagnostic (2026-08-02)
+
+Run `npm run test:dred` or double-click `start-dred-test.cmd`. The diagnostic overrides only the
+constructed Bot username, sends `/home` 1.5 seconds after entering play, observes the connection for
+60 seconds, and writes `.runtime/dred-login-report.json`. It has an isolated cooldown file and must
+not be changed to rewrite `.env` or the production service account. `DRED_OBSERVE_MS` and
+`DRED_LOGIN_TIMEOUT_MS` can override the two diagnostic timeouts.

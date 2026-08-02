@@ -98,3 +98,10 @@ serializer 的约 790 KiB 配方包，原版 `minecraft-protocol` schema 读偏�
   已无页面入口的后台功能。
 - 保留 `minecraft-idle-bot-update.timer` 和安全 fast-forward 更新脚本；它们只负责 push 后
   自动部署，与界面版本无关。
+
+## 2026-08-02 Dred 登录诊断
+
+- 新增 `start-dred-test.cmd` 双击入口，不修改 `.env`，仅让该诊断进程使用用户名 `Dred`。
+- 进入 `play` 后自动发送 `/home`，默认继续观察 60 秒，捕获协议错误、断线、未处理异常和进程崩溃。
+- 诊断结果写入 `.runtime/dred-login-report.json`；退出码 `0` 表示观察期内连接健康，其余退出码表示登录、命令、连接或进程异常。
+- 诊断使用 `.runtime/dred-login.cooldown`，不会读取或改写正式 Bot 的冷却文件。

@@ -4,6 +4,11 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { LightBot, CUSTOM_PACKETS, mergePosition, reconnectDelay, textOf } = require('../src/light-bot')
 
+test('LightBot accepts an isolated cooldown file', () => {
+  const bot = new LightBot({ cooldownFile: 'diagnostic.cooldown' })
+  assert.equal(bot.cooldownFile, 'diagnostic.cooldown')
+})
+
 test('mergePosition applies relative flags', () => {
   const old = { x: 10, y: 20, z: 30, yaw: 40, pitch: 50 }
   assert.deepEqual(mergePosition(old, { x: 1, y: 2, z: 3, yaw: 4, pitch: 5, flags: 0x15 }),
