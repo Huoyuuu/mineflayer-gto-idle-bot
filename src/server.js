@@ -21,6 +21,14 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/state') return json(res, 200, bot.snapshot())
   if (req.method === 'GET' && url.pathname === '/api/chat') return json(res, 200, chatStore.page({ before: url.searchParams.get('before'), limit: url.searchParams.get('limit') }))
   if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, phase: bot.state.phase })
+  if (req.method === 'POST' && url.pathname === '/api/login') {
+    bot.start()
+    return json(res, 200, { ok: true, state: bot.snapshot() })
+  }
+  if (req.method === 'POST' && url.pathname === '/api/logout') {
+    bot.stop()
+    return json(res, 200, { ok: true, state: bot.snapshot() })
+  }
   if (req.method === 'GET' && url.pathname === '/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' }); res.write(`event: state\ndata: ${JSON.stringify(bot.snapshot())}\n\n`); clients.add(res); req.on('close', () => clients.delete(res)); return
   }

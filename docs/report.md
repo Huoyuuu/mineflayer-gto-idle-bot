@@ -105,3 +105,64 @@ serializer 的约 790 KiB 配方包，原版 `minecraft-protocol` schema 读偏�
 - 进入 `play` 后自动发送 `/home`，默认继续观察 60 秒，捕获协议错误、断线、未处理异常和进程崩溃。
 - 诊断结果写入 `.runtime/dred-login-report.json`；退出码 `0` 表示观察期内连接健康，其余退出码表示登录、命令、连接或进程异常。
 - 诊断使用 `.runtime/dred-login.cooldown`，不会读取或改写正式 Bot 的冷却文件。
+
+## 2026-08-02 网页登录控制
+
+- 页面新增“登入”和“登出”按钮，分别调用 `POST /api/login` 与 `POST /api/logout`。
+- 登入/登出操作复用现有 `LightBot` 生命周期，状态通过 SSE 即时同步；服务启动时仍保持原有自动登录行为。
+
+## 2026-08-03 AE2 存储总线定位
+
+### 排查过程
+
+- 先检查 18013 服务，确认正式 Bot 位于 `minecraft:overworld` 的
+  `(117.5, 120.1, -89.5)`，服务为 `/home/huoyuuu/services/minecraft-idle-bot` 下的
+  `minecraft-idle-bot.service`。
+- 当前轻量 Bot 会主动丢弃 `map_chunk`，因此新增独立的只读脚本
+  `scripts/storage-bus-scan.js`。脚本只登录、确认传送、请求视距并记录区块、方块实体、
+  Forge registry 和 custom payload；不发送方块点击、窗口点击或物品移动包。
+- 第一次尝试调用远端 `/api/logout` 时，线上旧版本尚无该接口，返回 404，Bot 未退出；
+  随后的脚本又因系统 Node 18 不支持 `--env-file-if-exists` 而未启动。为此给扫描脚本增加
+  Node 18 `.env` 兼容加载，并改为停止 user service 后使用项目自带 Node 运行，最后无条件恢复服务。
+- 有效扫描重新加载 337 个区块，采集 4380 个方块实体，其中 785 个是 AE2 方块实体、
+  676 个是 `ae2:cable_bus`。扫描结束后正式服务恢复，Bot 再次进入 `play`。
+- `ae2:storage_bus` 是 cable bus 内部 part，不是独立方块。GTO 精确版本位于
+  `gtocore-forge-1.20.1-0.5.6-beta.jar` 内嵌的 AE2 `15.267.4`。`#upd` 首字节是
+  DOWN/UP/NORTH/SOUTH/WEST/EAST/中心线缆的 presence mask，随后按方位写 item registry ID
+  的 VarInt 和 part 状态。该服务器 registry 中 `ae2:storage_bus` 的 raw ID 为 1604，
+  对应 VarInt `c4 0c`。按此格式找到 17 个已放置存储总线。
+
+### 全部存储总线
+
+```text
+存储总线             朝向    相邻目标
+102 120 -81          UP      102 121 -81  functionalstorage:fluid_1
+107 126 -102         WEST    106 126 -102 gtceu:hv_input_bus
+107 125 -102         WEST    106 125 -102 gtocore:steam_fluid_input_hatch
+107 126 -100         WEST    106 126 -100 gtceu:hv_input_bus
+107 125 -100         WEST    106 125 -100 gtocore:steam_fluid_input_hatch
+111 123 -51          DOWN    111 122 -51  gtceu:hv_input_hatch
+111 123 -50          DOWN    111 122 -50  gtceu:hv_input_bus
+111 123 -52          DOWN    111 122 -52  gtceu:hv_input_hatch
+110 123 -52          DOWN    110 122 -52  gtceu:hv_input_hatch
+90 120 -71           SOUTH   90 120 -70   gtceu:lv_input_bus
+89 120 -71           SOUTH   89 120 -70   gtceu:lv_input_hatch
+121 124 -48          DOWN    121 123 -48  gtceu:lv_input_hatch
+120 124 -47          DOWN    120 123 -47  gtceu:hv_input_bus
+120 124 -48          DOWN    120 123 -48  gtceu:lv_input_hatch
+119 124 -48          DOWN    119 123 -48  gtceu:lv_input_hatch
+76 125 -79           UP      76 126 -79   functionalstorage:oak_4
+73 125 -76           NORTH   73 125 -77   functionalstorage:fluid_4
+```
+
+截图的“16 格且每格最大 64”与 HV 输入总线吻合，因此优先人工检查四组：
+
+```text
+storage bus 107 126 -102 -> HV input bus 106 126 -102
+storage bus 107 126 -100 -> HV input bus 106 126 -100
+storage bus 111 123 -50  -> HV input bus 111 122 -50
+storage bus 120 124 -47  -> HV input bus 120 123 -47
+```
+
+原始诊断结果保存在本地未跟踪运行目录 `.runtime/storage-bus-scan.remote.json`；其中包含
+本次 registry、所有区块方块实体和 AE2 更新字节，便于复核，但不提交 12 MiB 运行数据。

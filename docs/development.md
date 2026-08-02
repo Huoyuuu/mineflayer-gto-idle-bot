@@ -119,3 +119,31 @@ constructed Bot username, sends `/home` 1.5 seconds after entering play, observe
 60 seconds, and writes `.runtime/dred-login-report.json`. It has an isolated cooldown file and must
 not be changed to rewrite `.env` or the production service account. `DRED_OBSERVE_MS` and
 `DRED_LOGIN_TIMEOUT_MS` can override the two diagnostic timeouts.
+
+The web dashboard exposes `POST /api/login` and `POST /api/logout`. They are intentionally
+idempotent controls over the existing `LightBot`; the server still calls `bot.start()` once after
+the HTTP listener is ready, preserving unattended deployment behavior. Logout sets the bot's
+stopping generation, so an ended socket cannot schedule a reconnect; a later login starts a fresh
+generation.
+
+## Storage Bus Diagnostic (2026-08-03)
+
+Run `npm run scan:storage-bus` only when the production Minecraft session is stopped; the scanner
+uses the configured `BOT_USERNAME` and duplicate login will invalidate one of the sessions. It is a
+read-only packet collector and writes `.runtime/storage-bus-scan.json` by default. `SCAN_MS` and
+`SCAN_OUTPUT` override its observation duration and output path. It supports both the bundled Node
+runtime and system Node 18 by loading `.env` itself when `process.loadEnvFile` is unavailable.
+
+AE2 parts are serialized in the `#upd` byte array of `ae2:cable_bus`. For the embedded AE2
+15.267.4 build, the first byte is a presence mask in DOWN, UP, NORTH, SOUTH, WEST, EAST, center
+order. Each present entry begins with the current server's raw `minecraft:item` registry ID as a
+VarInt. Never hard-code ID 1604 for a future server: obtain `ae2:storage_bus` from the Forge item
+registry snapshot for every scan. `StorageBusPart` then writes one flags byte. Earlier parts can
+have variable-length streams, so a general decoder must understand each preceding part; the 17
+current records were checked against their complete short update layouts and neighboring block
+entities.
+
+The verified 2026-08-03 result is in `docs/report.md`. Four storage buses face HV input buses and
+are the primary candidates for a 16-slot inventory: `(107,126,-102)`, `(107,126,-100)`,
+`(111,123,-50)`, and `(120,124,-47)`. The production service was restored after scanning and no
+scanner process was left running.

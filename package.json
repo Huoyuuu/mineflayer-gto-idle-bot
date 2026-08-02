@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server.js",
     "test:dred": "node --env-file-if-exists=.env scripts/dred-login-check.js",
+    "scan:storage-bus": "node --env-file-if-exists=.env scripts/storage-bus-scan.js",
     "test": "node --test",
     "check": "node --check src/light-bot.js && node --check src/chat-store.js && node --check src/server.js"
   },
