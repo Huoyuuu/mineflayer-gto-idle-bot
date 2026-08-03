@@ -147,3 +147,56 @@ The verified 2026-08-03 result is in `docs/report.md`. Four storage buses face H
 are the primary candidates for a 16-slot inventory: `(107,126,-102)`, `(107,126,-100)`,
 `(111,123,-50)`, and `(120,124,-47)`. The production service was restored after scanning and no
 scanner process was left running.
+
+## Frontend Design System (2026-08-04)
+
+`public/app.css` is the single stylesheet. Tailwind is loaded from the CDN for layout utilities
+only (grid, flex, spacing, breakpoints); every visual decision — colour, border, type, motion —
+lives in `app.css` as a semantic class. Do not add colour or border utilities in markup, and do
+not restyle a component by editing `index.html`.
+
+Tokens are CSS custom properties on `:root`: `--paper`, `--paper-2`, `--sheet`, `--ink`,
+`--ink-soft`, `--ink-faint`, `--ink-ghost`, `--line`, `--line-soft`, `--online`, `--wait`,
+`--error`, plus `--ease` (the single shared easing curve) and `--gutter`. Change a token, not a
+rule, when adjusting the palette.
+
+Fonts are declared twice on purpose: once in `tailwind.config` so `font-sans`/`font-mono`/
+`font-display` utilities resolve, and once as `--font-display` / `--font-mono` in an inline
+`<style>` so `app.css` can reference them without depending on Tailwind. Instrument Serif is the
+display face, JetBrains Mono the micro-label and timestamp face, Inter the body face.
+
+Class contract used by the JS views — renaming any of these breaks rendering:
+
+- `.label` — letterspaced uppercase micro-label. `.eyebrow` composes with it for card headings and
+  adds the hairline underscore; `.eyebrow` must stay declared after `.label` because it overrides
+  `display`.
+- `.display` — the oversized serif numeral voice. Applied to hero phase, hero metrics, coordinates,
+  countdown, and the four stats totals. Size comes from a Tailwind bracket utility in markup.
+- `.num` — tabular figures only, no other effect.
+- `.card`, `.card-quiet`, `.hair` — surfaces. `.card-quiet` draws printer registration ticks via
+  `::before`/`::after`, so it cannot host another pseudo-element.
+- `.kv` — rows emitted by `rows()` in `lib.js` as `<div class="kv"><dt><dd>`.
+- `.dot` plus `.dot-online` / `.dot-wait` / `.dot-error` / `.dot-pulse` — set as a whole className
+  string by `dotClass()` in `view-status.js`; the hero and header share it.
+- `.msg`, `.msg-player` / `.msg-system` / `.msg-actionbar`, `.msg-hit`, `.daymark`, `mark` — chat
+  rows built by `messageRow()` in `view-chat.js`.
+- `.btn`, `.btn-solid`, `.btn-icon`, `.chip`, `.field`, `.tab`, `.meter`, `.chart`, `.toast`.
+
+`.btn` hover is an ink wipe: an absolutely positioned `::before` at `z-index:0` translates up from
+`101%`, and direct children are lifted to `z-index:1`. Both parts are required — dropping the child
+rule hides the label behind the fill.
+
+Paper texture is two fixed pseudo-elements on `body`: `::before` for the light gradients and
+`::after` for a data-URI `feTurbulence` grain at `mix-blend-mode: multiply`. `body > *` is raised to
+`z-index:1` to sit above them, so any new top-level element must be a child of `body`.
+
+Section entrance uses `section:not([hidden]) > *` with `nth-child` delays, which works because the
+router toggles the `hidden` attribute rather than a class. Everything is disabled under
+`prefers-reduced-motion: reduce`.
+
+Icons are Lucide via `data-lucide` attributes, replaced by `lucide.createIcons()`. The router calls
+it after every mount, so any markup injected later needs an `icons()` call. Emoji are not used
+anywhere in the interface.
+
+`public/package.json` only marks the directory as ESM so `node --check public/*.js` parses the
+modules; it is not an installable package.

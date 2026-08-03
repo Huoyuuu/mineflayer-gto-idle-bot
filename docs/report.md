@@ -166,3 +166,109 @@ storage bus 120 124 -47  -> HV input bus 120 123 -47
 
 原始诊断结果保存在本地未跟踪运行目录 `.runtime/storage-bus-scan.remote.json`；其中包含
 本次 registry、所有区块方块实体和 AE2 更新字节，便于复核，但不提交 12 MiB 运行数据。
+
+---
+
+# 前端界面重设计（2026-08-04）
+
+## 你提的问题
+
+“界面丑爆了”。这是个主观判断，但主观判断通常有客观成因，所以我先去找成因，而不是直接换配色。
+
+## 我看到了什么
+
+先列 `public/`，发现界面已经被拆成了模块：`index.html` 负责结构，`app.css` 是唯一样式表，
+`app.js` 是路由外壳，`lib.js` 是格式化与手写 SVG 图表，`store.js` 管 SSE 与轮询兜底，
+`view-status.js` / `view-chat.js` / `view-stats.js` 三个视图各自 mount/unmount。这个结构本身是干净的，
+所以我判断问题不在架构，而在视觉层——也就是说，这是一次纯样式改造，不需要动数据流。
+
+然后我把三个 view 文件都读完了。这一步不是为了改它们，是为了**确认哪些 class 是 JS 契约**。
+读出来的结果很关键：
+
+- `view-status.js` 的 `dotClass()` 直接赋值整个 className 字符串（`dot dot-online` 等），
+  并且 `$('#hero-dot').className` 会把 Tailwind 的尺寸类一起重写掉；
+- `lib.js` 的 `rows()` 硬编码生成 `<div class="kv"><dt><dd>`；
+- `view-chat.js` 的 `messageRow()` 硬编码 `msg msg-${kind}`、`msg-hit`、`daymark`、`mark`、`chip`；
+- `view-stats.js` 用 `dot` 当图例色块，靠 inline style 覆盖背景色。
+
+所以改造的边界确定了：**class 名一个都不能删**，只能重写它们的实现，并且可以新增 class。
+这个约束让我放弃了“重写 HTML 结构”的念头——那样会引入一堆需要同步修改 JS 的风险，
+而收益（视觉）完全可以靠样式层拿到。这也符合“在所有可行实现中选最简单的一个”。
+
+## 原来的样式为什么显得丑
+
+读完 `app.css`（旧版 317 行）我找到了几个具体原因，而不是笼统的“不好看”：
+
+1. **没有字体层级**。全站 `system-ui`，只靠 `font-size` 和 `font-weight` 区分层级。
+   最大的数字是 `text-[28px] font-semibold`，和正文只差一点，屏幕上没有视觉锚点，
+   眼睛不知道该先看哪里。
+2. **信息密度均匀**。每个 card 内边距一样、每个数字大小接近，整页是一张灰色的网格，
+   没有主次。仪表盘的本质是“一眼看状态”，均匀密度正好破坏了这件事。
+3. **纯平背景**。`--paper: #faf9f7` 是个不错的纸白，但铺成一整块纯色后就只是“浅灰”，
+   不是“纸”。纸的质感来自纤维颗粒和受光不均。
+4. **动效只有 120ms 的颜色过渡**。没有入场、没有生长、没有节奏，界面像截图而不像活的。
+5. **`--ink: #1c1917` 偏中性冷**，配纸白偏灰调，缺一点暖。
+
+## 我做了什么
+
+重写 `app.css`（现 630 行），主题定为 **Paper Telemetry**：一张会呼吸的印刷排版表。
+`index.html` 只做最小改动——加字体、把大数字挂上 `.display`、把 card 标题挂上 `.eyebrow`、
+微调间距。JS 一行未动。
+
+**排版**：引入 Instrument Serif 作为 display 字体，专门给数字用。hero 的状态字号做到
+`clamp(2.4rem, 7vw, 4.25rem)`，坐标 26px，统计总数 38px，倒计时 40px。
+微标签换成 JetBrains Mono、9.5px、`0.19em` 字距、全大写——这是印刷体系里
+“小字反而更精确”的处理，和巨大的衬线数字形成对位。正文换 Inter。
+一句话：**数字用衬线，标签用等宽，正文用无衬线**，三种声音各司其职。
+
+**纸**：`body::before` 叠三层 radial-gradient 模拟从左上打来的光和右上的暖影；
+`body::after` 用 data-URI 的 `feTurbulence` 生成灰度噪声，`mix-blend-mode: multiply`
+压上去做纤维颗粒。两者都 `position: fixed` 且 `pointer-events: none`，
+`body > *` 抬到 `z-index: 1`。这里踩到的点：噪声层必须 `inset: -50%`，
+否则 `fixed` 元素在某些滚动合成路径下边缘会露白。
+
+**油墨色**：`--ink` 调成 `#171310`（更暖更深），`--online` 调成 `#0d7a5f`，
+`--wait` `#b4620a`，`--error` `#b3261e`——三个状态色都降低了饱和度，
+让它们像印在纸上而不是发光。
+
+**细节动效**（全部走同一条 `--ease: cubic-bezier(0.22,1,0.36,1)`，这是保持“一个手感”的关键）：
+
+- 在线状态点有 2.8s 的雷达 ping 扩散；等待重连时是 breathe 缩放。
+- 按钮 hover 是**油墨上翻**：`::before` 从 `translateY(101%)` 推到 0。
+  这里有个必须成对存在的实现——`::before` 放 `z-index: 0`，
+  同时把直接子元素抬到 `z-index: 1`。我第一版写的是 `z-index: -1`，
+  那样填充会被按钮自身背景挡住完全看不见；改成 0 之后又会盖住文字，
+  所以子元素提层是配套的、不能省。
+- tab 下划线用 `scaleX` 从左侧生长，hover 时到 0.34，选中到 1，340ms。
+- 聊天行 hover 时左边距浮出一条 1.5px 的墨线（`scaleY` 生长），像读到哪画到哪。
+- 搜索命中行有 2.4s 的 `flare` 从深黄褪到浅黄。
+- 图表 `rect` 有 `transform-origin: bottom` 的 640ms 生长，`path` 有淡入。
+- 视图切换时 `section:not([hidden]) > *` 按 `nth-child` 阶梯延迟 0/55/110/165ms 落位。
+  这一招能成立，是因为路由用的是 `hidden` 属性而不是 class——读 `app.js` 时确认过 `setHidden()`。
+- 全部动效在 `prefers-reduced-motion: reduce` 下关闭。
+
+**印刷符号**：hero 卡片的 `::before` / `::after` 画左上右下两个 9px 的直角角标，
+是印刷业的套准标记；`.eyebrow` 给 card 标题加发丝下划线；`.meter` 上叠
+`repeating-linear-gradient` 刻度，像印好的标尺；`.daymark` 两侧是渐隐的发丝线；
+`mark` 改成 `linear-gradient(180deg, transparent 54%, #fbe08a 54%)`，
+即只有下半截着色的荧光笔效果，比整块背景色干净。
+
+**边框**：全站 `border-radius: 0`（chip 除外，保留胶囊形），一律 1px 发丝线。
+圆角是让界面显得“软”和“通用”的主要来源，去掉之后立刻有印刷品的硬朗。
+
+## 验证
+
+`node --check` 过了 `public/` 下全部 7 个 JS 模块（`public/package.json` 标了
+`"type": "module"` 才能这样检查）。`npm test` 14 项全过——本次没动 JS，
+这一步是确认工作区里上一轮遗留的 `src/` 改动没坏。
+
+提交 `b64490f` 推到 `server-live`。服务器上 `minecraft-idle-bot-update.timer`
+每分钟拉一次 `origin/server-live`，我手动触发了一次 update service 让它立刻生效。
+远端确认：HEAD 已是 `b64490f`，服务 `active`，`/api/state` 返回 200，
+`/app.css` 返回 200 且首行是新的 Paper Telemetry 注释头。
+
+## 有一点我要说明
+
+我没做浏览器截图验证——你明确说了不需要。所以“好不好看”这件事，
+我只能保证设计意图和实现是一致的、代码不报错、线上已经生效。
+最终判断在 18013 上，由你来下。
