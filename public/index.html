@@ -1,27 +1,336 @@
 <!doctype html>
 <html lang="zh-CN">
+
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Idle Bot</title>
-  <script src="https://cdn.tailwindcss.com"></script><script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-  <style>html,body{margin:0;background:#fafaf9;color:#292524;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}*{box-sizing:border-box}.chat{scrollbar-width:thin}.dot{width:8px;height:8px;border-radius:50%;display:inline-block}</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Idle Bot 控制台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
+            display: ['Instrument Serif', 'Georgia', 'serif']
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="/app.css">
+  <style>
+    :root {
+      --font-display: 'Instrument Serif', Georgia, serif;
+      --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+  </style>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
 </head>
-<body><main class="mx-auto flex min-h-screen max-w-5xl flex-col gap-4 p-4 sm:p-8">
-  <header class="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-4"><div><p class="text-xs uppercase tracking-widest text-stone-500">minimal presence</p><h1 class="text-xl font-semibold">Idle Bot</h1></div><div class="flex items-center gap-4"><div id="phase" class="text-sm text-stone-500"><span class="dot bg-stone-400"></span> offline</div><div class="flex gap-2"><button id="login" class="inline-flex h-9 items-center gap-2 border border-stone-800 bg-stone-800 px-3 text-xs text-white hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-35" type="button" title="登录 Minecraft"><i data-lucide="log-in" class="h-4 w-4"></i><span>登入</span></button><button id="logout" class="inline-flex h-9 items-center gap-2 border border-stone-300 bg-white px-3 text-xs text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-35" type="button" title="断开 Minecraft 连接"><i data-lucide="log-out" class="h-4 w-4"></i><span>登出</span></button></div></div></header>
-  <section class="grid gap-4 md:grid-cols-[240px_1fr]">
-    <aside class="border border-stone-200 bg-white p-4"><h2 class="mb-3 text-xs uppercase tracking-wider text-stone-500">bot info</h2><dl id="info" class="space-y-2 text-sm"></dl></aside>
-    <section class="flex min-h-[560px] flex-col border border-stone-200 bg-white"><div class="flex h-12 items-center justify-between border-b border-stone-200 px-4"><span class="text-xs uppercase tracking-wider text-stone-500">chat</span><div class="flex items-center gap-2"><button id="newer" class="grid h-8 w-8 place-items-center border border-stone-200 text-stone-600 disabled:opacity-30" type="button" title="较新一页" disabled><i data-lucide="chevron-left" class="h-4 w-4"></i></button><span id="page" class="min-w-14 text-center text-xs text-stone-500">第 1 页</span><button id="older" class="grid h-8 w-8 place-items-center border border-stone-200 text-stone-600 disabled:opacity-30" type="button" title="较早一页" disabled><i data-lucide="chevron-right" class="h-4 w-4"></i></button></div></div><div id="chat" class="chat flex-1 space-y-2 overflow-y-auto p-4 text-sm"></div><form id="form" class="flex gap-2 border-t border-stone-200 p-3"><input id="message" maxlength="256" autocomplete="off" class="min-w-0 flex-1 border border-stone-300 bg-stone-50 px-3 py-2 outline-none focus:border-stone-700" placeholder="发送消息"><button class="grid h-10 w-10 shrink-0 place-items-center border border-stone-800 bg-stone-800 text-white hover:bg-stone-700" type="submit" title="发送"><i data-lucide="send" class="h-4 w-4"></i></button></form></section>
-  </section>
-</main><script>
-const $=s=>document.querySelector(s), phase=$('#phase'), info=$('#info'), chat=$('#chat'), login=$('#login'), logout=$('#logout');let pageNumber=1,currentBefore=null,pageData=null,newerCursors=[]
-const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))
-function render(s){const online=s.connected, starting=['connecting','reconnecting'].includes(s.phase);phase.innerHTML=`<span class="dot ${online?'bg-emerald-500':starting?'bg-amber-500':'bg-stone-400'}"></span> ${esc(s.phase)}`;login.disabled=online||starting||s.phase==='cooldown';logout.disabled=!online&&!starting;info.innerHTML=[['name',s.username],['server',`${s.host}:${s.port}`],['world',s.world||'--'],['health',s.health==null?'--':`${s.health} / 20`],['food',s.food==null?'--':s.food],['position',s.position?`${s.position.x.toFixed(2)}, ${s.position.y.toFixed(2)}, ${s.position.z.toFixed(2)}`:'--'],['packets',s.packets],['retries',s.reconnects],['next retry',s.nextReconnectAt?new Date(s.nextReconnectAt).toLocaleTimeString():'--'],['uptime',`${s.uptime}s`]].map(([k,v])=>`<div class="flex justify-between gap-3"><dt class="text-stone-500">${k}</dt><dd class="text-right">${esc(v)}</dd></div>`).join('')}
-function renderChat(data){pageData=data;chat.innerHTML=data.items.length?data.items.map(m=>`<div class="leading-6"><span class="text-stone-400">${new Date(m.at).toLocaleString()}</span> <b class="font-medium">${esc(m.sender)}</b> <span>${esc(m.text)}</span></div>`).join(''):'<div class="py-10 text-center text-stone-400">暂无消息</div>';$('#page').textContent=`第 ${pageNumber} 页`;$('#newer').disabled=pageNumber===1;$('#older').disabled=!data.hasOlder;chat.scrollTop=chat.scrollHeight}
-async function loadChat(before=currentBefore){const query=before==null?'':'?before='+encodeURIComponent(before);const response=await fetch('/api/chat'+query);if(response.ok)renderChat(await response.json())}
-$('#older').onclick=()=>{if(!pageData?.hasOlder)return;newerCursors.push(currentBefore);currentBefore=pageData.nextBefore;pageNumber++;loadChat()}
-$('#newer').onclick=()=>{if(pageNumber===1)return;currentBefore=newerCursors.pop()??null;pageNumber--;loadChat()}
-fetch('/api/state').then(r=>r.json()).then(render);loadChat();const events=new EventSource('/events');events.addEventListener('state',e=>render(JSON.parse(e.data)));events.addEventListener('chat',()=>{if(pageNumber===1)loadChat(null)});lucide.createIcons();
-$('#form').onsubmit=async e=>{e.preventDefault();const input=$('#message'),message=input.value.trim();if(!message)return;const r=await fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message})});if(r.ok)input.value='';else alert((await r.json()).error)}
-async function control(endpoint){const button=endpoint.endsWith('login')?login:logout;button.disabled=true;try{const r=await fetch(endpoint,{method:'POST'});const data=await r.json();if(!r.ok||!data.ok)throw new Error(data.error||'操作失败');render(data.state)}catch(error){alert(error.message)}}
-login.onclick=()=>control('/api/login');logout.onclick=()=>control('/api/logout')
-</script></body></html>
+
+<body class="font-sans antialiased">
+  <a href="#main"
+    class="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:bg-white focus:px-3 focus:py-2">跳到主内容</a>
+
+  <header class="chrome sticky top-0 z-40 border-b hair">
+    <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2.5 sm:px-6">
+      <div class="flex items-baseline gap-2.5">
+        <span class="brand">Idle&nbsp;Bot</span>
+        <span class="label hidden sm:inline">console</span>
+      </div>
+
+      <div id="head-status" class="flex items-center gap-2 text-[12.5px] text-stone-600" aria-live="polite">
+        <span class="dot"></span>
+        <span id="head-phase" class="num">offline</span>
+      </div>
+
+      <nav class="order-last flex w-full items-center gap-1 sm:order-none sm:ml-auto sm:w-auto" aria-label="主导航">
+        <a href="#/status" class="tab" data-tab="status"><i data-lucide="activity" class="h-3.5 w-3.5"></i>状态</a>
+        <a href="#/chat" class="tab" data-tab="chat"><i data-lucide="messages-square" class="h-3.5 w-3.5"></i>对话</a>
+        <a href="#/stats" class="tab" data-tab="stats"><i data-lucide="bar-chart-3" class="h-3.5 w-3.5"></i>汇总</a>
+      </nav>
+
+      <div class="ml-auto flex items-center gap-1.5 sm:ml-0">
+        <button id="login" class="btn btn-solid" type="button" title="登录 Minecraft">
+          <i data-lucide="log-in" class="h-3.5 w-3.5"></i><span class="hidden sm:inline">登入</span>
+        </button>
+        <button id="logout" class="btn" type="button" title="断开 Minecraft 连接">
+          <i data-lucide="log-out" class="h-3.5 w-3.5"></i><span class="hidden sm:inline">登出</span>
+        </button>
+      </div>
+    </div>
+    <div id="link-warn" class="hidden border-t border-amber-200 bg-amber-50 px-4 py-1.5 text-[11.5px] text-amber-800 sm:px-6">
+      <span class="mx-auto flex max-w-6xl items-center gap-2">
+        <i data-lucide="wifi-off" class="h-3.5 w-3.5"></i>
+        <span id="link-warn-text">实时连接中断，正在轮询兜底</span>
+      </span>
+    </div>
+  </header>
+
+  <main id="main" class="mx-auto max-w-6xl px-4 py-5 sm:px-6 sm:py-7">
+
+    <!-- ── 状态 ──────────────────────────────────────────────────────── -->
+    <section id="view-status" hidden>
+      <div class="card-quiet mb-5 p-5 sm:p-7">
+        <div class="flex flex-wrap items-end justify-between gap-x-10 gap-y-6">
+          <div class="min-w-0">
+            <p class="label mb-3">当前状态</p>
+            <p class="flex items-center gap-3.5">
+              <span id="hero-dot" class="dot h-2.5 w-2.5"></span>
+              <span id="hero-phase" class="display text-[clamp(2.4rem,7vw,4.25rem)]">offline</span>
+            </p>
+            <p id="hero-note" class="mt-3 max-w-[46ch] text-[12.5px] leading-relaxed text-stone-500">尚未连接</p>
+          </div>
+
+          <dl class="grid grid-cols-2 gap-x-10 gap-y-4 sm:grid-cols-4">
+            <div>
+              <dt class="label">本次在线</dt>
+              <dd id="hero-session" class="display mt-1.5 text-[22px]">--</dd>
+            </div>
+            <div>
+              <dt class="label">进程运行</dt>
+              <dd id="hero-uptime" class="display mt-1.5 text-[22px]">--</dd>
+            </div>
+            <div>
+              <dt class="label">收包总数</dt>
+              <dd id="hero-packets" class="display mt-1.5 text-[22px]">--</dd>
+            </div>
+            <div>
+              <dt class="label">实时速率</dt>
+              <dd id="hero-rate" class="display mt-1.5 text-[22px]">--</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="mt-6 border-t hair pt-3">
+          <div class="mb-1 flex items-baseline justify-between">
+            <span class="label">收包速率 / 最近 10 分钟</span>
+            <span id="rate-peak" class="label num"></span>
+          </div>
+          <div id="rate-chart" class="chart"></div>
+        </div>
+      </div>
+
+      <div id="alert-band" class="mb-4 hidden border border-amber-300 bg-amber-50 p-4">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div class="flex items-start gap-2.5">
+            <i data-lucide="timer" class="mt-0.5 h-4 w-4 shrink-0 text-amber-700"></i>
+            <div>
+              <p id="alert-title" class="text-[13px] font-medium text-amber-900">等待重连</p>
+              <p id="alert-detail" class="mt-0.5 text-[12px] text-amber-800"></p>
+            </div>
+          </div>
+          <p class="text-right">
+            <span class="label text-amber-700">剩余</span>
+            <span id="alert-countdown" class="display block text-[40px] text-amber-900">--:--</span>
+          </p>
+        </div>
+        <div class="mt-3 border-t border-amber-200 pt-2.5">
+          <p class="label mb-1.5 text-amber-700">退避阶梯</p>
+          <div id="ladder" class="flex flex-wrap gap-1.5"></div>
+        </div>
+      </div>
+
+      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3"><i data-lucide="fingerprint" class="h-3.5 w-3.5"></i>身份与世界</h2>
+          <dl id="card-identity"></dl>
+        </div>
+
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="heart-pulse" class="h-3.5 w-3.5"></i>生命状态</h2>
+          <div class="space-y-3.5">
+            <div>
+              <div class="mb-1.5 flex items-baseline justify-between text-[12.5px]">
+                <span class="text-stone-500">生命值</span>
+                <span id="hp-text" class="num">--</span>
+              </div>
+              <div class="meter"><span id="hp-bar" style="width:0"></span></div>
+            </div>
+            <div>
+              <div class="mb-1.5 flex items-baseline justify-between text-[12.5px]">
+                <span class="text-stone-500">饱食度</span>
+                <span id="food-text" class="num">--</span>
+              </div>
+              <div class="meter"><span id="food-bar" style="width:0"></span></div>
+            </div>
+            <dl id="card-vitals" class="border-t hair pt-1"></dl>
+          </div>
+        </div>
+
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="map-pin" class="h-3.5 w-3.5"></i>坐标</h2>
+          <div id="coords" class="grid grid-cols-3 gap-2 text-center">
+            <div><p class="label">X</p><p id="pos-x" class="display mt-1 text-[26px]">--</p></div>
+            <div><p class="label">Y</p><p id="pos-y" class="display mt-1 text-[26px]">--</p></div>
+            <div><p class="label">Z</p><p id="pos-z" class="display mt-1 text-[26px]">--</p></div>
+          </div>
+          <dl id="card-look" class="mt-3 border-t hair pt-1"></dl>
+        </div>
+
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3"><i data-lucide="plug-zap" class="h-3.5 w-3.5"></i>连接与重连</h2>
+          <dl id="card-connection"></dl>
+        </div>
+
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3"><i data-lucide="waves" class="h-3.5 w-3.5"></i>流量</h2>
+          <dl id="card-traffic"></dl>
+        </div>
+
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3"><i data-lucide="stethoscope" class="h-3.5 w-3.5"></i>诊断</h2>
+          <dl id="card-diagnostics"></dl>
+          <div id="last-error-box" class="mt-2.5 hidden border-l-2 border-red-300 bg-red-50 px-2.5 py-2">
+            <p class="label text-red-700">最后错误</p>
+            <p id="last-error" class="mt-0.5 break-words text-[12px] leading-relaxed text-red-900"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 对话 ──────────────────────────────────────────────────────── -->
+    <section id="view-chat" hidden>
+      <div class="card mb-3 p-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="relative min-w-[200px] flex-1">
+            <i data-lucide="search" class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400"></i>
+            <input id="q" class="field w-full pl-8" type="search" placeholder="搜索消息内容或发言人" autocomplete="off"
+              aria-label="搜索消息">
+          </div>
+          <input id="q-sender" class="field w-[128px]" list="sender-list" placeholder="发言人" autocomplete="off"
+            aria-label="按发言人过滤">
+          <datalist id="sender-list"></datalist>
+          <input id="q-since" class="field w-[132px]" type="date" aria-label="起始日期">
+          <span class="text-stone-300">—</span>
+          <input id="q-until" class="field w-[132px]" type="date" aria-label="结束日期">
+          <button id="q-clear" class="btn" type="button" title="清除全部条件">
+            <i data-lucide="x" class="h-3.5 w-3.5"></i><span class="hidden sm:inline">清除</span>
+          </button>
+        </div>
+
+        <div class="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t hair pt-2.5">
+          <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="按类型过滤">
+            <span class="label mr-0.5">类型</span>
+            <button class="chip" data-kind="all" aria-pressed="true">全部</button>
+            <button class="chip" data-kind="player" aria-pressed="false">玩家</button>
+            <button class="chip" data-kind="system" aria-pressed="false">系统</button>
+            <button class="chip" data-kind="actionbar" aria-pressed="false">动作栏</button>
+          </div>
+          <p id="chat-summary" class="num text-[11.5px] text-stone-500"></p>
+        </div>
+      </div>
+
+      <div class="card flex min-h-[500px] flex-col">
+        <div id="chat" class="chat flex-1 space-y-0.5 overflow-y-auto p-3" aria-live="polite" aria-relevant="additions"
+          style="max-height:min(62vh,620px)"></div>
+
+        <div class="flex flex-wrap items-center justify-between gap-2 border-t hair px-3 py-2">
+          <div class="flex items-center gap-1">
+            <button id="pg-newest" class="btn btn-icon" type="button" title="最新" aria-label="跳到最新">
+              <i data-lucide="chevrons-right" class="h-3.5 w-3.5"></i>
+            </button>
+            <button id="pg-newer" class="btn btn-icon" type="button" title="较新一页" aria-label="较新一页">
+              <i data-lucide="chevron-right" class="h-3.5 w-3.5"></i>
+            </button>
+            <span id="pg-label" class="num min-w-[104px] text-center text-[11.5px] text-stone-500">第 1 页</span>
+            <button id="pg-older" class="btn btn-icon" type="button" title="较早一页" aria-label="较早一页">
+              <i data-lucide="chevron-left" class="h-3.5 w-3.5"></i>
+            </button>
+            <button id="pg-oldest" class="btn btn-icon" type="button" title="最早" aria-label="跳到最早">
+              <i data-lucide="chevrons-left" class="h-3.5 w-3.5"></i>
+            </button>
+          </div>
+
+          <div class="flex items-center gap-1.5">
+            <label class="label" for="pg-jump">跳转</label>
+            <input id="pg-jump" class="field w-[68px] text-center" type="number" min="1" step="1" placeholder="页">
+            <button id="pg-go" class="btn" type="button">前往</button>
+            <button id="pg-live" class="btn hidden" type="button">
+              <i data-lucide="arrow-down" class="h-3.5 w-3.5"></i><span id="pg-live-text">新消息</span>
+            </button>
+          </div>
+        </div>
+
+        <form id="composer" class="flex gap-2 border-t hair p-2.5">
+          <input id="message" class="field h-9 min-w-0 flex-1" maxlength="256" autocomplete="off"
+            placeholder="发送消息到服务器" aria-label="消息内容">
+          <button class="btn btn-solid h-9 w-9 p-0" type="submit" title="发送" aria-label="发送">
+            <i data-lucide="send" class="h-3.5 w-3.5"></i>
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ── 汇总 ──────────────────────────────────────────────────────── -->
+    <section id="view-stats" hidden>
+      <div class="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div class="card p-4">
+          <p class="label">消息总数</p>
+          <p id="s-total" class="display mt-2 text-[38px]">--</p>
+          <p id="s-bytes" class="num mt-0.5 text-[11.5px] text-stone-500"></p>
+        </div>
+        <div class="card p-4">
+          <p class="label">发言人</p>
+          <p id="s-senders" class="display mt-2 text-[38px]">--</p>
+          <p id="s-top" class="mt-0.5 truncate text-[11.5px] text-stone-500"></p>
+        </div>
+        <div class="card p-4">
+          <p class="label">最早记录</p>
+          <p id="s-first" class="num mt-2 text-[13px] font-medium">--</p>
+          <p id="s-span" class="num mt-0.5 text-[11.5px] text-stone-500"></p>
+        </div>
+        <div class="card p-4">
+          <p class="label">最新记录</p>
+          <p id="s-last" class="num mt-2 text-[13px] font-medium">--</p>
+          <p id="s-last-rel" class="num mt-0.5 text-[11.5px] text-stone-500"></p>
+        </div>
+      </div>
+
+      <div class="card mb-4 p-4">
+        <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 class="eyebrow label grow"><i data-lucide="trending-up" class="h-3.5 w-3.5"></i>最近 48 小时消息量</h2>
+          <p id="s-48-note" class="num label"></p>
+        </div>
+        <div id="chart-48" class="chart"></div>
+      </div>
+
+      <div class="grid gap-4 lg:grid-cols-2">
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="calendar-days" class="h-3.5 w-3.5"></i>最近 30 天</h2>
+          <div id="chart-30d" class="chart"></div>
+        </div>
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="clock" class="h-3.5 w-3.5"></i>按小时分布（全部历史）</h2>
+          <div id="chart-hod" class="chart"></div>
+        </div>
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="users" class="h-3.5 w-3.5"></i>活跃发言人</h2>
+          <div id="chart-senders" class="chart"></div>
+        </div>
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="layers" class="h-3.5 w-3.5"></i>消息类型构成</h2>
+          <div id="chart-kinds" class="chart"></div>
+          <dl id="kinds-list" class="mt-3 border-t hair pt-1"></dl>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toasts" class="toast-wrap" aria-live="assertive" aria-atomic="true"></div>
+
+  <noscript>
+    <p style="padding:16px">此控制台需要 JavaScript。原始接口：<code>/api/state</code>、<code>/api/chat</code>。</p>
+  </noscript>
+
+  <script type="module" src="/app.js"></script>
+</body>
+
+</html>

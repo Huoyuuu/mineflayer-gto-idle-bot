@@ -90,7 +90,7 @@ class LightBot extends EventEmitter {
       position: null, packets: 0, chunksIgnored: 0, reconnects: 0,
       consecutiveReconnects: 0, cooldownUntil: null,
       nextReconnectAt: null, reconnectDelayMs: null, reconnectAttempt: 0,
-      lastPacketAt: null, lastError: null
+      lastPacketAt: null, lastError: null, sessionStartedAt: null
     }
   }
 
@@ -129,6 +129,7 @@ class LightBot extends EventEmitter {
     this.client?.end('stopped'); this.socket?.destroy()
     this.client = this.socket = null
     this.state.phase = 'offline'; this.state.connected = false
+    this.state.sessionStartedAt = null
     this.emit('state', this.snapshot())
   }
   readCooldown () {
@@ -154,8 +155,14 @@ class LightBot extends EventEmitter {
     setTimeout(() => process.exit(75), 100)
   }
   snapshot () {
+    const now = Date.now()
     return { ...this.state, position: this.state.position && { ...this.state.position },
-      uptime: Math.floor((Date.now() - this.startedAt) / 1000) }
+      uptime: Math.floor((now - this.startedAt) / 1000),
+      startedAt: new Date(this.startedAt).toISOString(),
+      sessionUptime: this.state.sessionStartedAt
+        ? Math.floor((now - Date.parse(this.state.sessionStartedAt)) / 1000)
+        : null,
+      serverTime: new Date(now).toISOString() }
   }
   sendChat (value) {
     const message = String(value ?? '').trim()
@@ -208,6 +215,7 @@ class LightBot extends EventEmitter {
       clearTimeout(this.loginTimer); clearTimeout(this.stableTimer); clearInterval(this.livenessTimer)
       this.loginTimer = this.stableTimer = this.livenessTimer = null; this.client = this.socket = null
       this.state.connected = false; this.state.phase = 'offline'
+      this.state.sessionStartedAt = null
       const endReason = textOf(reason) || this.state.lastError || 'socket closed'
       this.state.lastError ||= endReason
       console.error(`[bot] connection ended: ${endReason}`)
@@ -232,6 +240,7 @@ class LightBot extends EventEmitter {
   onLogin (packet) {
     clearTimeout(this.loginTimer); this.loginTimer = null; this.attempt = 0
     this.state.phase = 'play'; this.state.connected = true; this.state.entityId = packet.entityId; this.state.world = packet.worldName; this.state.gameMode = packet.gameMode; this.state.lastError = null
+    this.state.sessionStartedAt = new Date().toISOString()
     clearTimeout(this.stableTimer)
     this.stableTimer = setTimeout(() => {
       this.consecutiveReconnects = 0
@@ -268,4 +277,15 @@ class LightBot extends EventEmitter {
   log (message) { if (this.options.debug) console.log(message) }
 }
 
-module.exports = { LightBot, CUSTOM_PACKETS, mergePosition, reconnectDelay, textOf }
+module.exports = {
+  LightBot,
+  CUSTOM_PACKETS,
+  mergePosition,
+  reconnectDelay,
+  textOf,
+  RECONNECT_DELAYS,
+  MAX_CONSECUTIVE_RECONNECTS,
+  COOLDOWN_MS,
+  STABLE_RESET_MS,
+  LIVENESS_TIMEOUT_MS
+}

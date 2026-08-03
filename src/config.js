@@ -23,6 +23,7 @@ const config = Object.freeze({
   webHost: process.env.WEB_HOST || '127.0.0.1',
   webPort: integerSetting('WEB_PORT', 18000, 1, 65535),
   viewDistance: integerSetting('VIEW_DISTANCE', 2, 2, 32),
+  chatFile: process.env.CHAT_FILE || path.join(rootDir, '.minecraft-idle-bot.chat.jsonl'),
   debug: ['1', 'true', 'yes', 'on'].includes((process.env.BOT_DEBUG || '').toLowerCase())
 })
 

@@ -1,0 +1,5 @@
+{
+  "//": "Marks public/ as ES modules so `node --check public/*.js` parses them correctly.",
+  "type": "module",
+  "private": true
+}
