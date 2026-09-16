@@ -171,7 +171,10 @@ class LightBot extends EventEmitter {
     this.client.chat(message)
   }
   addChat (kind, sender, message) {
-    const entry = { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, kind, sender: sender || 'server', text: message, at: new Date().toISOString() }
+    const text = String(message ?? '').trim()
+    if (!text) return
+    if (kind === 'system' && /^(gtocore\.|doespotatotick\.)/.test(text)) return
+    const entry = { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, kind, sender: sender || 'server', text, at: new Date().toISOString() }
     this.emit('chat', entry)
     this.emit('state', this.snapshot())
   }

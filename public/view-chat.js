@@ -45,8 +45,9 @@ function messageRow (message, { needle = '', hit = false, jump = false } = {}) {
   const action = jump
     ? `<button class="chip ml-1.5 h-5 px-1.5 align-middle text-[10px]" data-jump="${message.index}" title="在上下文中查看">#${message.index + 1}</button>`
     : ''
-  return `<div class="msg msg-${kind}${hit ? ' msg-hit' : ''}" data-index="${message.index}" id="msg-${message.index}">
-    <time datetime="${esc(message.at)}" title="${esc(new Date(message.at).toLocaleString('zh-CN'))}">${clock(at)}</time>
+  const idxAttr = Number.isInteger(message.index) ? ` data-index=\"${message.index}\" id=\"msg-${message.index}\"` : ''
+  return `<div class=\"msg msg-${kind}${hit ? ' msg-hit' : ''}\"${idxAttr}>
+    <time datetime=\"${esc(message.at)}\" title=\"${esc(new Date(message.at).toLocaleString('zh-CN'))}\">${clock(at)}</time>
     <div>${sender}${highlighted(message.text, needle)}${action}</div>
   </div>`
 }
@@ -270,12 +271,78 @@ function bind () {
   }
 }
 
-on('chat', () => {
-  view.pending++
-  if (!mounted || !dom.live) return
-  if (view.mode === 'browse' && view.page === 1 && view.around == null) { clearPending(); return load() }
-  dom.live.classList.remove('hidden')
-  setText(dom.liveText, `${view.pending} 条新消息`)
+let appendQueue = []
+let appendTimer = null
+
+function flushIncomingChats () {
+  appendTimer = null
+  if (!appendQueue.length || !mounted || !dom.chat) {
+    appendQueue = []
+    return
+  }
+  const batch = appendQueue
+  appendQueue = []
+
+  if (view.mode === 'browse' && view.page === 1 && view.around == null) {
+    clearPending()
+    const wasAtBottom = dom.chat.scrollHeight - dom.chat.scrollTop - dom.chat.clientHeight < 60
+    let lastDay = ''
+    const lastMsg = dom.chat.querySelector('.msg:last-child')
+    if (lastMsg) {
+      const prevTime = lastMsg.querySelector('time')?.getAttribute('datetime')
+      if (prevTime) lastDay = dayKey(new Date(prevTime))
+    }
+
+    const fragment = document.createDocumentFragment()
+    const temp = document.createElement('div')
+    let html = ''
+    for (const message of batch) {
+      const date = new Date(message.at)
+      const key = dayKey(date)
+      if (key !== lastDay) {
+        html += `<div class=\"daymark\">${esc(dayTitle(date))}</div>`
+        lastDay = key
+      }
+      html += messageRow(message, { needle: filters.q })
+      if (view.data?.items) {
+        view.data.items.push(message)
+        view.data.total = (view.data.total || 0) + 1
+        if (view.data.items.length > 80) view.data.items.shift()
+      }
+    }
+    temp.innerHTML = html
+    while (temp.firstChild) fragment.appendChild(temp.firstChild)
+    dom.chat.appendChild(fragment)
+
+    // 保持 DOM 数量合理，超出时移除顶部元素
+    while (dom.chat.children.length > 100) {
+      dom.chat.removeChild(dom.chat.firstElementChild)
+    }
+
+    if (view.data) {
+      setText(dom.summary, view.data.total ? `共 ${num(view.data.total)} 条 · 本页最新` : '共 0 条')
+    }
+
+    if (wasAtBottom) {
+      dom.chat.scrollTop = dom.chat.scrollHeight
+    }
+    return
+  }
+
+  view.pending += batch.length
+  if (dom.live) {
+    dom.live.classList.remove('hidden')
+    setText(dom.liveText, `${view.pending} 条新消息`)
+  }
+}
+
+on('chat', message => {
+  // 过滤掉前端不需要显示的模组 system spam
+  if (message.kind === 'system' && /^(gtocore\.|doespotatotick\.)/.test(message.text || '')) return
+  appendQueue.push(message)
+  if (!appendTimer) {
+    appendTimer = setTimeout(flushIncomingChats, 120)
+  }
 })
 
 async function loadSenders () {
