@@ -6,11 +6,13 @@ import { toast } from './toast.js'
 import { statusView } from './view-status.js'
 import { chatView } from './view-chat.js'
 import { statsView } from './view-stats.js'
+import { networkView } from './view-network.js'
 
 const views = {
   status: { view: statusView, section: '#view-status' },
   chat: { view: chatView, section: '#view-chat' },
-  stats: { view: statsView, section: '#view-stats' }
+  stats: { view: statsView, section: '#view-stats' },
+  network: { view: networkView, section: '#view-network' }
 }
 
 const icons = () => window.lucide?.createIcons?.()
@@ -32,7 +34,7 @@ async function route () {
 
   for (const [key, entry] of Object.entries(views)) setHidden($(entry.section), key !== name)
   $$('[data-tab]').forEach(tab => tab.setAttribute('aria-selected', String(tab.dataset.tab === name)))
-  document.title = { status: '状态', chat: '对话', stats: '汇总' }[name] + ' · Idle Bot'
+  document.title = { status: '状态', chat: '对话', stats: '汇总', network: '网络' }[name] + ' · Idle Bot'
 
   active = name
   await views[name].view.mount?.(params)

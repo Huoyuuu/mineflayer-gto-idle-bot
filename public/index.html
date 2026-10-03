@@ -55,6 +55,7 @@
         <a href="#/status" class="tab" data-tab="status"><i data-lucide="activity" class="h-3.5 w-3.5"></i>状态</a>
         <a href="#/chat" class="tab" data-tab="chat"><i data-lucide="messages-square" class="h-3.5 w-3.5"></i>对话</a>
         <a href="#/stats" class="tab" data-tab="stats"><i data-lucide="bar-chart-3" class="h-3.5 w-3.5"></i>汇总</a>
+        <a href="#/network" class="tab" data-tab="network"><i data-lucide="radar" class="h-3.5 w-3.5"></i>网络</a>
       </nav>
 
       <div class="ml-auto flex items-center gap-1.5 sm:ml-0">
@@ -195,7 +196,7 @@
         </div>
 
         <div class="card p-4 md:col-span-2 lg:col-span-3">
-          <h2 class="eyebrow label mb-3"><i data-lucide="radar" class="h-3.5 w-3.5"></i>网络门控<span id="net-badge" class="ml-auto num text-[11px] text-stone-400">--</span></h2>
+          <h2 class="eyebrow label mb-3"><i data-lucide="radar" class="h-3.5 w-3.5"></i>网络门控<span id="net-badge" class="ml-auto num text-[11px] text-stone-400">--</span><a href="#/network" class="num text-[11px] underline decoration-stone-300 underline-offset-2">持续探测历史 →</a></h2>
           <div class="mb-1.5 flex items-baseline justify-between text-[12.5px]">
             <span id="net-note" class="text-stone-500">--</span>
             <span id="net-progress" class="num">-- / 20</span>
@@ -329,6 +330,80 @@
           <h2 class="eyebrow label mb-3.5"><i data-lucide="layers" class="h-3.5 w-3.5"></i>消息类型构成</h2>
           <div id="chart-kinds" class="chart"></div>
           <dl id="kinds-list" class="mt-3 border-t hair pt-1"></dl>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 网络 ──────────────────────────────────────────────────────── -->
+    <section id="view-network" hidden>
+      <div class="mb-4 flex flex-wrap items-center gap-2">
+        <button id="n-run" class="btn btn-solid" type="button" title="立即做一次 Server List Ping">
+          <i data-lucide="radar" class="h-3.5 w-3.5"></i><span id="n-run-label">立即探测</span>
+        </button>
+        <span id="n-next" class="num label ml-1"></span>
+        <div class="ml-auto flex gap-1.5" role="group" aria-label="时间范围">
+          <button class="chip" data-net-hours="6" aria-pressed="false">6 小时</button>
+          <button class="chip" data-net-hours="24" aria-pressed="true">24 小时</button>
+          <button class="chip" data-net-hours="72" aria-pressed="false">3 天</button>
+          <button class="chip" data-net-hours="168" aria-pressed="false">7 天</button>
+          <button class="chip" data-net-hours="336" aria-pressed="false">14 天</button>
+        </div>
+      </div>
+
+      <div class="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div class="card p-4">
+          <p class="label">最新延迟 ms</p>
+          <p id="n-last" class="display mt-2 text-[38px]">--</p>
+          <p id="n-last-at" class="num mt-0.5 truncate text-[11.5px] text-stone-500"></p>
+        </div>
+        <div class="card p-4">
+          <p class="label">重连门控（最近 20 次）</p>
+          <p id="n-gate" class="display mt-2 text-[38px]">--</p>
+          <p id="n-gate-note" class="num mt-0.5 text-[11.5px] text-stone-500"></p>
+        </div>
+        <div class="card p-4">
+          <p class="label">区间失败率</p>
+          <p id="n-loss" class="display mt-2 text-[38px]">--</p>
+          <p id="n-loss-note" class="num mt-0.5 text-[11.5px] text-stone-500"></p>
+        </div>
+        <div class="card p-4">
+          <p class="label">区间中位延迟 ms</p>
+          <p id="n-p50" class="display mt-2 text-[38px]">--</p>
+          <p id="n-p50-note" class="num mt-0.5 text-[11.5px] text-stone-500"></p>
+        </div>
+      </div>
+
+      <div class="card mb-4 p-4">
+        <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 class="eyebrow label grow"><i data-lucide="activity" class="h-3.5 w-3.5"></i>延迟时间线</h2>
+          <p class="num label">黑线 中位 · 灰带 p10–p90 · 红柱 失败 · 黄底 Bot 离线 · 底条 门控是否达标</p>
+        </div>
+        <div id="chart-net-timeline" class="chart"></div>
+      </div>
+
+      <div class="grid gap-4 lg:grid-cols-2">
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="trending-down" class="h-3.5 w-3.5"></i>逐小时失败率 %</h2>
+          <div id="chart-net-loss" class="chart"></div>
+        </div>
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="bar-chart-3" class="h-3.5 w-3.5"></i>延迟分布（50ms 一档，浅色 ≥ p90 阈值）</h2>
+          <div id="chart-net-hist" class="chart"></div>
+        </div>
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="clock" class="h-3.5 w-3.5"></i>按小时失败率 %（全部历史）</h2>
+          <div id="chart-net-hod-loss" class="chart"></div>
+        </div>
+        <div class="card p-4">
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="clock-3" class="h-3.5 w-3.5"></i>按小时中位延迟 ms（全部历史）</h2>
+          <div id="chart-net-hod-ms" class="chart"></div>
+        </div>
+        <div class="card p-4 lg:col-span-2">
+          <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="eyebrow label grow"><i data-lucide="list" class="h-3.5 w-3.5"></i>最近探测</h2>
+            <p id="n-history" class="num label"></p>
+          </div>
+          <dl id="net-recent" class="grid gap-x-10 md:grid-cols-3"></dl>
         </div>
       </div>
     </section>

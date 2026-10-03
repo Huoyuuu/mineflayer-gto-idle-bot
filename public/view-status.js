@@ -199,10 +199,10 @@ function renderNetwork (state, now) {
   const n = state.network
   const gating = state.phase === 'reconnecting'
   const ok = (value, max) => value == null ? '--' : `<span class="${value <= max ? 'text-emerald-700' : 'text-red-700'}">${value}</span>`
-  setText($('#net-badge'), gating ? (n?.good ? '已达标' : '门控中') : n ? '上次断线数据' : '在线不探测')
+  setText($('#net-badge'), gating ? (n?.good ? '已达标' : '门控中') : n ? '上次断线数据' : 'Bot 在线')
   setText($('#net-note'), gating
     ? `断线后每 30 秒 Server List Ping，窗口满 ${NET.window} 次且全部达标即重连`
-    : '仅在断线后探测；在线期间不额外发包')
+    : 'Bot 自身只在断线后用这组数据决定何时重连；持续探测见网络页')
   setText($('#net-progress'), `${n?.samples ?? 0} / ${NET.window}`)
   meter('#net-bar', n?.samples ?? 0, NET.window, n?.good ? '#059669' : gating ? '#d97706' : '#d6d3d1')
   rows($('#card-network'), [

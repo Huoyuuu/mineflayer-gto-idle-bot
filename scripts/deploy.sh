@@ -20,10 +20,13 @@ install -m 0644 deploy/minecraft-idle-bot-update.service \
   "$HOME/.config/systemd/user/minecraft-idle-bot-update.service"
 install -m 0644 deploy/minecraft-idle-bot-update.timer \
   "$HOME/.config/systemd/user/minecraft-idle-bot-update.timer"
+install -m 0644 deploy/minecraft-idle-bot-probe.service \
+  "$HOME/.config/systemd/user/minecraft-idle-bot-probe.service"
 git config core.hooksPath .githooks
 systemctl --user daemon-reload
 systemctl --user enable minecraft-idle-bot.service >/dev/null
 systemctl --user enable --now minecraft-idle-bot-update.timer >/dev/null
-systemctl --user restart minecraft-idle-bot.service
+systemctl --user enable minecraft-idle-bot-probe.service >/dev/null
+systemctl --user restart minecraft-idle-bot.service minecraft-idle-bot-probe.service
 
 echo "[deploy] minecraft-idle-bot.service restarted from $(git rev-parse --short HEAD)"

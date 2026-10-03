@@ -551,6 +551,9 @@ mark {
 
 .chart path { animation: draw 900ms var(--ease) both; }
 
+/* Timeline redraws every 30 s; keep it still. */
+.net-timeline rect, .net-timeline path { animation: none; }
+
 @keyframes grow {
   from { transform: scaleY(0.02); }
   to { transform: scaleY(1); }

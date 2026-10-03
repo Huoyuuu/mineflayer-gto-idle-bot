@@ -8,3 +8,4 @@ logs/
 *.log
 .runtime/
 *.bak-*
+.minecraft-idle-bot.probes.jsonl
