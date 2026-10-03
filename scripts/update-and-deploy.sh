@@ -35,4 +35,9 @@ echo "[update] deploying ${local_sha:0:7} -> ${remote_sha:0:7}"
 # The timer calls deploy explicitly so a failed deployment makes the unit fail.
 # Manual git pull still uses .githooks/post-merge.
 git -c core.hooksPath=/dev/null merge --ff-only "$remote_ref"
+# Static files are read from disk per request, so frontend/docs-only updates need no restart.
+if ! git diff --name-only "$local_sha" "$remote_sha" | grep -qvE '^(public/|docs/|test/)|\.md$'; then
+  echo "[update] hot update ${remote_sha:0:7}: only public/docs/test changed, service not restarted"
+  exit 0
+fi
 exec "$root_dir/scripts/deploy.sh"

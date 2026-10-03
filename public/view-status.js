@@ -166,7 +166,6 @@ function renderCards (state, now) {
     ['累计重连', num(state.reconnects)],
     ['连续掉线', `${state.consecutiveReconnects || 0} / ${(limits.maxConsecutiveReconnects ?? 3) + 1}`],
     ['当前退避', state.reconnectDelayMs ? `${state.reconnectDelayMs / 60000} 分钟` : '--'],
-    ['网络门控', state.phase === 'reconnecting' ? netText(state.network) : '--'],
     ['下次重连', state.nextReconnectAt ? `${stamp(state.nextReconnectAt)}<br><span class="text-stone-400">${countdown(Date.parse(state.nextReconnectAt) - now)} 后</span>` : '--'],
     ['冷却截止', state.cooldownUntil ? stamp(state.cooldownUntil) : '--']
   ])
@@ -190,6 +189,28 @@ function renderCards (state, now) {
   setHidden($('#last-error-box'), !hasError)
   $('#last-error-box').classList.toggle('hidden', !hasError)
   if (hasError) setText($('#last-error'), state.lastError)
+  renderNetwork(state, now)
+}
+
+// Thresholds mirror src/light-bot.js (NETWORK_*); the backend only reports the measured window.
+const NET = { window: 20, maxFailures: 1, medianMs: 400, p90Ms: 800 }
+
+function renderNetwork (state, now) {
+  const n = state.network
+  const gating = state.phase === 'reconnecting'
+  const ok = (value, max) => value == null ? '--' : `<span class="${value <= max ? 'text-emerald-700' : 'text-red-700'}">${value}</span>`
+  setText($('#net-badge'), gating ? (n?.good ? '已达标' : '门控中') : n ? '上次断线数据' : '在线不探测')
+  setText($('#net-note'), gating
+    ? `断线后每 30 秒 Server List Ping，窗口满 ${NET.window} 次且全部达标即重连`
+    : '仅在断线后探测；在线期间不额外发包')
+  setText($('#net-progress'), `${n?.samples ?? 0} / ${NET.window}`)
+  meter('#net-bar', n?.samples ?? 0, NET.window, n?.good ? '#059669' : gating ? '#d97706' : '#d6d3d1')
+  rows($('#card-network'), [
+    ['失败次数', n ? `${ok(n.failures, NET.maxFailures)} <span class="text-stone-400">/ 上限 ${NET.maxFailures}</span>` : '--'],
+    ['中位延迟', n ? `${ok(n.medianMs, NET.medianMs)} ms <span class="text-stone-400">/ ≤ ${NET.medianMs}</span>` : '--'],
+    ['p90 延迟', n ? `${ok(n.p90Ms, NET.p90Ms)} ms <span class="text-stone-400">/ ≤ ${NET.p90Ms}</span>` : '--'],
+    ['兜底重连', gating && state.nextReconnectAt ? `${stamp(state.nextReconnectAt)}<br><span class="text-stone-400">${countdown(Date.parse(state.nextReconnectAt) - now)} 后</span>` : '--']
+  ])
 }
 
 /* Lifecycle -------------------------------------------------------------- */
