@@ -24,12 +24,13 @@ function stats (points) {
 // Replays the bot's gate rule over a sliding window ending at each point.
 function gateOpen (points, index, gate) {
   const since = points[index][0] - gate.windowMs
-  if (points[0][0] > since + data.intervalMs) return null
-  let samples = 0, failures = 0
+  let samples = 0, failures = 0, oldest = points[index][0]
   for (let i = index; i >= 0 && points[i][0] > since; i--) {
     samples++
+    oldest = points[i][0]
     if (points[i][1] == null) failures++
   }
+  if (oldest > since + data.intervalMs) return null
   return samples >= gate.minSamples && failures / samples < gate.maxFailRate
 }
 

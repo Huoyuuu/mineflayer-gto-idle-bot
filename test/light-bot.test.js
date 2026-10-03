@@ -68,6 +68,7 @@ test('gate uses the last 20 minutes, strictly below 5%, without latency limits',
   assert.equal(networkGate(probes, now).ok, false) // exactly 5%
   assert.equal(networkGate(probes, now + GATE.windowMs).ok, false) // stale history
   assert.equal(networkGate(history(now).slice(-5), now).ok, false) // insufficient history
+  assert.equal(networkGate([{ t: now - 86400000, ms: 200 }, ...history(now).slice(-30)], now).ok, false) // an old record cannot hide a gap
 })
 
 test('startup waits like a drop and reuses saved samples on the next probe', async () => {

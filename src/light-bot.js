@@ -55,11 +55,13 @@ function reconnectDelay (attempt) {
 function networkGate (probes, now = Date.now()) {
   let samples = 0
   let failures = 0
+  let oldest = now
   for (let i = probes.length - 1; i >= 0 && probes[i].t > now - GATE.windowMs; i--) {
     samples++
+    oldest = probes[i].t
     if (probes[i].ms == null) failures++
   }
-  const covered = probes.length > 0 && probes[0].t <= now - GATE.windowMs + PROBE_INTERVAL_MS
+  const covered = samples > 0 && oldest <= now - GATE.windowMs + PROBE_INTERVAL_MS
   return { ok: covered && samples >= GATE.minSamples && failures / samples < GATE.maxFailRate, samples, failures, covered }
 }
 
