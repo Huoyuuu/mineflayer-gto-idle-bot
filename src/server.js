@@ -223,6 +223,6 @@ server.on('error', error => {
 })
 listen()
 
-const shutdown = () => { clearInterval(tickTimer); clearInterval(probeTimer); bot.stop(); server.close(() => process.exit(0)) }
+const shutdown = () => { clearInterval(tickTimer); clearInterval(probeTimer); bot.stop(); for (const res of clients) res.end(); server.close(() => process.exit(0)) }
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
