@@ -199,7 +199,7 @@
           <h2 class="eyebrow label mb-3"><i data-lucide="radar" class="h-3.5 w-3.5"></i>网络门控<span id="net-badge" class="ml-auto num text-[11px] text-stone-400">--</span><a href="#/network" class="num text-[11px] underline decoration-stone-300 underline-offset-2">持续探测历史 →</a></h2>
           <div class="mb-1.5 flex items-baseline justify-between text-[12.5px]">
             <span id="net-note" class="text-stone-500">--</span>
-            <span id="net-progress" class="num">-- / 20</span>
+            <span id="net-progress" class="num">-- 次</span>
           </div>
           <div class="meter mb-3"><span id="net-bar" style="width:0"></span></div>
           <dl id="card-network" class="grid gap-x-10 sm:grid-cols-2 lg:grid-cols-4"></dl>
@@ -357,7 +357,7 @@
           <p id="n-last-at" class="num mt-0.5 truncate text-[11.5px] text-stone-500"></p>
         </div>
         <div class="card p-4">
-          <p class="label">重连门控（最近 20 次）</p>
+          <p class="label">重连门控（最近 20 分钟）</p>
           <p id="n-gate" class="display mt-2 text-[38px]">--</p>
           <p id="n-gate-note" class="num mt-0.5 text-[11.5px] text-stone-500"></p>
         </div>
@@ -387,7 +387,7 @@
           <div id="chart-net-loss" class="chart"></div>
         </div>
         <div class="card p-4">
-          <h2 class="eyebrow label mb-3.5"><i data-lucide="bar-chart-3" class="h-3.5 w-3.5"></i>延迟分布（50ms 一档，浅色 ≥ p90 阈值）</h2>
+          <h2 class="eyebrow label mb-3.5"><i data-lucide="bar-chart-3" class="h-3.5 w-3.5"></i>延迟分布（50ms 一档）</h2>
           <div id="chart-net-hist" class="chart"></div>
         </div>
         <div class="card p-4">

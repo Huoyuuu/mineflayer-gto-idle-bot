@@ -31,7 +31,7 @@ function dotClass (state) {
 
 function netText (n) {
   if (!n) return '探测中'
-  return `${n.samples} 次探测，失败 ${n.failures}，中位 ${n.medianMs ?? '--'}ms，p90 ${n.p90Ms ?? '--'}ms${n.good ? '，已达标' : ''}`
+  return `最近 20 分钟 ${n.samples} 次探测，失败 ${n.failures}（${n.samples ? (n.failures / n.samples * 100).toFixed(1) : '--'}%）${n.ok ? '，已达标' : ''}`
 }
 
 function heroNote (state, now) {
@@ -192,23 +192,19 @@ function renderCards (state, now) {
   renderNetwork(state, now)
 }
 
-// Thresholds mirror src/light-bot.js (NETWORK_*); the backend only reports the measured window.
-const NET = { window: 20, maxFailures: 1, medianMs: 400, p90Ms: 800 }
-
 function renderNetwork (state, now) {
   const n = state.network
+  const gate = limits.networkGate
   const gating = state.phase === 'reconnecting'
-  const ok = (value, max) => value == null ? '--' : `<span class="${value <= max ? 'text-emerald-700' : 'text-red-700'}">${value}</span>`
-  setText($('#net-badge'), gating ? (n?.good ? '已达标' : '门控中') : n ? '上次断线数据' : 'Bot 在线')
-  setText($('#net-note'), gating
-    ? `断线后每 30 秒 Server List Ping，窗口满 ${NET.window} 次且全部达标即重连`
-    : 'Bot 自身只在断线后用这组数据决定何时重连；持续探测见网络页')
-  setText($('#net-progress'), `${n?.samples ?? 0} / ${NET.window}`)
-  meter('#net-bar', n?.samples ?? 0, NET.window, n?.good ? '#059669' : gating ? '#d97706' : '#d6d3d1')
+  const rate = n?.samples ? `${(n.failures / n.samples * 100).toFixed(1)}%` : '--'
+  setText($('#net-badge'), n?.ok ? '网络达标' : '等待网络恢复')
+  setText($('#net-note'), '持续探测与重连共用同一份记录；最近 20 分钟失败率 < 5% 才提前重连')
+  setText($('#net-progress'), `${n?.samples ?? 0} 次`)
+  meter('#net-bar', n?.samples ?? 0, gate?.minSamples || 30, n?.ok ? '#059669' : '#d97706')
   rows($('#card-network'), [
-    ['失败次数', n ? `${ok(n.failures, NET.maxFailures)} <span class="text-stone-400">/ 上限 ${NET.maxFailures}</span>` : '--'],
-    ['中位延迟', n ? `${ok(n.medianMs, NET.medianMs)} ms <span class="text-stone-400">/ ≤ ${NET.medianMs}</span>` : '--'],
-    ['p90 延迟', n ? `${ok(n.p90Ms, NET.p90Ms)} ms <span class="text-stone-400">/ ≤ ${NET.p90Ms}</span>` : '--'],
+    ['失败次数', n ? `${n.failures} / ${n.samples}` : '--'],
+    ['失败率', `<span class="${n?.ok ? 'text-emerald-700' : 'text-red-700'}">${rate}</span>`],
+    ['记录覆盖', n?.covered ? '已覆盖最近 20 分钟' : '历史不足，继续采样'],
     ['兜底重连', gating && state.nextReconnectAt ? `${stamp(state.nextReconnectAt)}<br><span class="text-stone-400">${countdown(Date.parse(state.nextReconnectAt) - now)} 后</span>` : '--']
   ])
 }

@@ -26,14 +26,11 @@ const COOLDOWN_MS = 2 * 60 * 60 * 1000
 const STABLE_RESET_MS = 10 * 60 * 1000
 const LIVENESS_TIMEOUT_MS = 90 * 1000
 const KEEPALIVE_TIMEOUT_MS = 60 * 1000
-// Network gate: after a drop, probe with Server List Ping (no login) and only reconnect
-// once a full sliding window is good; conservative thresholds, 60-minute fallback.
+// Server List Ping every 30 s (no login). While waiting to reconnect, connect only when the
+// last 20 minutes have >= 30 probes and a failure rate below 5%, or once the fallback is due.
 const PROBE_INTERVAL_MS = 30 * 1000
 const PROBE_TIMEOUT_MS = 5 * 1000
-const NETWORK_WINDOW = 20
-const NETWORK_MAX_FAILURES = 1
-const NETWORK_MAX_MEDIAN_MS = 400
-const NETWORK_MAX_P90_MS = 800
+const GATE = { windowMs: 20 * 60 * 1000, maxFailRate: 0.05, minSamples: 30 }
 const NETWORK_FALLBACK_MS = 60 * 60 * 1000
 const COOLDOWN_FILE = path.resolve(__dirname, '../.minecraft-idle-bot.cooldown')
 const CUSTOM_PACKETS = {
@@ -54,17 +51,16 @@ function reconnectDelay (attempt) {
   return RECONNECT_DELAYS[Math.min(attempt - 1, RECONNECT_DELAYS.length - 1)]
 }
 
-// samples: latency in ms, or null for a failed probe (most recent last)
-function networkQuality (samples) {
-  const window = samples.slice(-NETWORK_WINDOW)
-  const ok = window.filter(value => value != null).sort((a, b) => a - b)
-  const pick = q => ok.length ? ok[Math.min(ok.length - 1, Math.floor(q * ok.length))] : null
-  const failures = window.length - ok.length
-  const medianMs = pick(0.5)
-  const p90Ms = pick(0.9)
-  const good = window.length >= NETWORK_WINDOW && failures <= NETWORK_MAX_FAILURES &&
-    medianMs <= NETWORK_MAX_MEDIAN_MS && p90Ms <= NETWORK_MAX_P90_MS
-  return { good, samples: window.length, failures, medianMs, p90Ms }
+// probes: [{ t, ms | null }] oldest first
+function networkGate (probes, now = Date.now()) {
+  let samples = 0
+  let failures = 0
+  for (let i = probes.length - 1; i >= 0 && probes[i].t > now - GATE.windowMs; i--) {
+    samples++
+    if (probes[i].ms == null) failures++
+  }
+  const covered = probes.length > 0 && probes[0].t <= now - GATE.windowMs + PROBE_INTERVAL_MS
+  return { ok: covered && samples >= GATE.minSamples && failures / samples < GATE.maxFailRate, samples, failures, covered }
 }
 
 function textOf (component) {
@@ -96,10 +92,10 @@ class LightBot extends EventEmitter {
     this.cooldownFile = options.cooldownFile || COOLDOWN_FILE
     this.client = null
     this.socket = null
-    this.timer = null
     this.loginTimer = null
     this.stableTimer = null
-    this.samples = []
+    this.probes = []
+    this.gateAt = null
     this.livenessTimer = null
     this.cooldownTimer = null
     this.cooldownUntil = null
@@ -120,7 +116,7 @@ class LightBot extends EventEmitter {
   }
 
   start () {
-    if (this.client || this.cooldownTimer) return this
+    if (this.client || this.cooldownTimer || this.gateAt) return this
     this.stopping = false
     const persistedUntil = this.readCooldown()
     if (persistedUntil > Date.now()) {
@@ -142,15 +138,16 @@ class LightBot extends EventEmitter {
       return this
     }
     this.clearCooldown()
-    this.connect()
+    this.schedule()
     return this
   }
   stop () {
     this.stopping = true
     this.generation = Symbol('stopped')
-    clearTimeout(this.timer); clearTimeout(this.loginTimer)
+    this.gateAt = null
+    clearTimeout(this.loginTimer)
     clearTimeout(this.stableTimer); clearTimeout(this.cooldownTimer); clearInterval(this.livenessTimer)
-    this.timer = this.loginTimer = this.stableTimer = this.cooldownTimer = this.livenessTimer = null
+    this.loginTimer = this.stableTimer = this.cooldownTimer = this.livenessTimer = null
     this.client?.end('stopped'); this.socket?.destroy()
     this.client = this.socket = null
     this.state.phase = 'offline'; this.state.connected = false
@@ -167,8 +164,9 @@ class LightBot extends EventEmitter {
     try { fs.unlinkSync(this.cooldownFile) } catch (error) { if (error.code !== 'ENOENT') console.error(`[bot] cannot clear cooldown: ${error.message}`) }
   }
   enterCooldown (reason, trigger = `${MAX_CONSECUTIVE_RECONNECTS + 1} consecutive reconnects reached`) {
-    clearTimeout(this.timer); clearTimeout(this.loginTimer); clearTimeout(this.stableTimer); clearInterval(this.livenessTimer)
-    this.timer = this.loginTimer = this.stableTimer = this.livenessTimer = null
+    this.gateAt = null
+    clearTimeout(this.loginTimer); clearTimeout(this.stableTimer); clearInterval(this.livenessTimer)
+    this.loginTimer = this.stableTimer = this.livenessTimer = null
     const until = Date.now() + COOLDOWN_MS
     try { fs.writeFileSync(this.cooldownFile, `${until}\n`, { mode: 0o600 }) } catch (error) { console.error(`[bot] cannot persist cooldown: ${error.message}`) }
     this.cooldownUntil = until
@@ -208,7 +206,7 @@ class LightBot extends EventEmitter {
     this.generation = generation
     this.state.phase = this.state.reconnects ? 'reconnecting' : 'connecting'
     this.state.nextReconnectAt = null; this.state.reconnectDelayMs = null; this.state.reconnectAttempt = 0
-    clearInterval(this.timer); this.timer = null
+    this.gateAt = null
     this.state.lastPacketAt = null
     this.emit('state', this.snapshot())
     let client
@@ -291,44 +289,38 @@ class LightBot extends EventEmitter {
     this.addChat('system', 'bot', `已进入 ${packet.worldName || '服务器'}`)
   }
   schedule () {
-    clearInterval(this.timer)
     const delay = reconnectDelay(this.attempt++)
     this.state.reconnects++
     this.state.phase = 'reconnecting'
     this.state.reconnectDelayMs = delay
     this.state.reconnectAttempt = this.attempt
-    // Fresh window: only probes taken after this drop count toward the gate.
-    this.samples = []
-    this.state.network = networkQuality(this.samples)
     this.gateAt = Date.now() + delay
-    this.fallbackAt = this.gateAt + NETWORK_FALLBACK_MS
-    this.state.nextReconnectAt = new Date(this.fallbackAt).toISOString()
-    const generation = this.generation
-    this.timer = setInterval(() => this.probe(generation), PROBE_INTERVAL_MS)
+    this.state.nextReconnectAt = new Date(this.gateAt + NETWORK_FALLBACK_MS).toISOString()
     console.error(`[bot] reconnect attempt ${this.attempt}: wait ${delay / 60000} minutes, then reconnect once network is good (fallback at ${this.state.nextReconnectAt})`)
     this.emit('state', this.snapshot())
   }
-  async probe (generation) {
-    if (this.probing) return
-    this.probing = true
-    let latency = null
-    try {
-      const ping = this.options.probe || (() => mc.ping({ host: this.options.mcHost, port: this.options.mcPort, version: this.options.mcVersion, closeTimeout: PROBE_TIMEOUT_MS, noPongTimeout: PROBE_TIMEOUT_MS }))
-      const result = await ping()
-      latency = Number.isFinite(result?.latency) ? result.latency : null
-    } catch {} finally { this.probing = false }
-    // Ignore results that arrive after stop(), a manual login, or a new drop.
-    if (this.generation !== generation || this.client || this.stopping) return
-    this.samples.push(latency)
-    if (this.samples.length > NETWORK_WINDOW) this.samples.shift()
-    const quality = this.state.network = networkQuality(this.samples)
-    const now = Date.now()
-    if (now >= this.gateAt && (quality.good || now >= this.fallbackAt)) {
-      console.error(`[bot] ${quality.good ? 'network good' : 'network fallback reached'} (median ${quality.medianMs}ms, p90 ${quality.p90Ms}ms, ${quality.failures}/${quality.samples} failed); reconnecting`)
-      this.connect()
-      return
-    }
-    this.emit('state', this.snapshot())
+  // One Server List Ping; records it and, while waiting, reconnects if the gate allows.
+  probe (src = 'auto') {
+    if (this.probing) return this.probing
+    this.probing = (async () => {
+      const record = { t: Date.now(), ms: null, src, phase: this.state.phase }
+      try {
+        const ping = this.options.probe || (() => mc.ping({ host: this.options.mcHost, port: this.options.mcPort, version: this.options.mcVersion, closeTimeout: PROBE_TIMEOUT_MS, noPongTimeout: PROBE_TIMEOUT_MS }))
+        const result = await ping()
+        if (Number.isFinite(result?.latency)) record.ms = result.latency
+        else record.err = 'no pong'
+      } catch (error) { record.err = String(error?.message || error).slice(0, 80) }
+      this.probes.push(record)
+      const gate = this.state.network = networkGate(this.probes)
+      this.emit('probe', record)
+      const now = Date.now()
+      if (this.gateAt && now >= this.gateAt && (gate.ok || now >= this.gateAt + NETWORK_FALLBACK_MS)) {
+        console.error(`[bot] ${gate.ok ? 'network good' : 'network fallback reached'} (${gate.failures}/${gate.samples} failed in 20 minutes); reconnecting`)
+        this.connect()
+      } else this.emit('state', this.snapshot())
+      return record
+    })().finally(() => { this.probing = null })
+    return this.probing
   }
   fail (error) { this.state.lastError = error?.message || String(error); if (this.options.debug) console.error(`[bot] ${this.state.lastError}`); this.emit('state', this.snapshot()) }
   log (message) { if (this.options.debug) console.log(message) }
@@ -339,12 +331,13 @@ module.exports = {
   CUSTOM_PACKETS,
   mergePosition,
   reconnectDelay,
-  networkQuality,
+  networkGate,
   textOf,
   RECONNECT_DELAYS,
   MAX_CONSECUTIVE_RECONNECTS,
   COOLDOWN_MS,
   STABLE_RESET_MS,
   LIVENESS_TIMEOUT_MS,
-  NETWORK_WINDOW
+  GATE,
+  PROBE_INTERVAL_MS
 }

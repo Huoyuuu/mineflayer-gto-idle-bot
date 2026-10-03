@@ -23,14 +23,19 @@ function stats (points) {
 
 // Replays the bot's gate rule over a sliding window ending at each point.
 function gateOpen (points, index, gate) {
-  if (index + 1 < gate.window) return null
-  const s = stats(points.slice(index + 1 - gate.window, index + 1))
-  return s.fail <= gate.maxFailures && s.p50 <= gate.medianMs && s.p90 <= gate.p90Ms
+  const since = points[index][0] - gate.windowMs
+  if (points[0][0] > since + data.intervalMs) return null
+  let samples = 0, failures = 0
+  for (let i = index; i >= 0 && points[i][0] > since; i--) {
+    samples++
+    if (points[i][1] == null) failures++
+  }
+  return samples >= gate.minSamples && failures / samples < gate.maxFailRate
 }
 
 const pct = (part, whole) => whole ? `${(part / whole * 100).toFixed(1)}%` : '--'
 const msText = value => value == null ? '--' : `${value} ms`
-const tone = (value, max) => value == null ? 'text-stone-400' : value <= max ? 'text-emerald-700' : 'text-red-700'
+const tone = value => value == null ? 'text-red-700' : 'text-emerald-700'
 
 /* Timeline chart --------------------------------------------------------- */
 
@@ -48,7 +53,7 @@ function timeline (points, gate, from, to) {
     if (p[3]) c.online++
     c.gate.push(gateOpen(points, index, gate))
   })
-  const ceiling = points.reduce((m, p) => p[1] != null && p[1] < 2500 && p[1] > m ? p[1] : m, gate.p90Ms * 1.25)
+  const ceiling = points.reduce((m, p) => p[1] != null && p[1] < 2500 && p[1] > m ? p[1] : m, 1000)
   const y = value => top + plot - Math.min(1, value / ceiling) * plot
   const x = index => index * (W / cols)
   const w = W / cols
@@ -75,9 +80,6 @@ function timeline (points, gate, from, to) {
     }
   })
   const path = line.reduce((d, pt, i) => pt ? `${d}${line[i - 1] ? 'L' : 'M'}${pt[0].toFixed(1)} ${pt[1].toFixed(1)} ` : d, '')
-  const thresholds = [[gate.medianMs, `中位 ≤ ${gate.medianMs}`, COLORS.good], [gate.p90Ms, `p90 ≤ ${gate.p90Ms}`, COLORS.warn]]
-    .map(([v, label, color]) => `<line x1="0" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${color}" stroke-dasharray="4 4" stroke-width="1"/>
-      <text x="${W - 2}" y="${(y(v) - 3).toFixed(1)}" text-anchor="end" font-size="9" fill="${color}" font-family="ui-monospace,monospace">${label}</text>`).join('')
   const ticks = Array.from({ length: 7 }, (_, k) => {
     const t = from + (to - from) * k / 6
     const d = new Date(t)
@@ -86,7 +88,7 @@ function timeline (points, gate, from, to) {
   }).join('')
   const yTicks = [0, 0.5, 1].map(f => `<text x="2" y="${(y(ceiling * f) + (f ? 10 : -2)).toFixed(1)}" font-size="9" fill="#a8a29e" font-family="ui-monospace,monospace">${Math.round(ceiling * f)}ms</text>`).join('')
   return `<svg class="net-timeline" viewBox="0 0 ${W} ${H}" role="img" aria-label="延迟时间线" style="height:${H}px">
-    ${offline}${band}${thresholds}
+    ${offline}${band}
     <path d="${path}" fill="none" stroke="${COLORS.ink}" stroke-width="1.3" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
     ${fails}${gateStrip}${yTicks}
     <line x1="0" x2="${W}" y1="${top + plot}" y2="${top + plot}" stroke="#e7e5e4"/>${ticks}
@@ -105,11 +107,11 @@ function render () {
   const last = points.at(-1)
 
   setText($('#n-last'), last ? (last[1] == null ? '失败' : `${last[1]}`) : '--')
-  $('#n-last').className = `display mt-2 text-[38px] ${last ? tone(last[1], gate.medianMs) : ''}`
+  $('#n-last').className = `display mt-2 text-[38px] ${last ? tone(last[1]) : ''}`
   setText($('#n-last-at'), last ? `${relative(new Date(last[0]).toISOString())}${last[2] ? ' · 手动' : ''}${last[4] ? ` · ${last[4]}` : ''}` : '')
-  setText($('#n-gate'), quality.good ? '达标' : '未达标')
-  $('#n-gate').className = `display mt-2 text-[38px] ${quality.good ? 'text-emerald-700' : 'text-red-700'}`
-  setText($('#n-gate-note'), `最近 ${quality.samples} 次 · 失败 ${quality.failures} · 中位 ${msText(quality.medianMs)} · p90 ${msText(quality.p90Ms)}`)
+  setText($('#n-gate'), quality.ok ? '达标' : '未达标')
+  $('#n-gate').className = `display mt-2 text-[38px] ${quality.ok ? 'text-emerald-700' : 'text-red-700'}`
+  setText($('#n-gate-note'), `最近 20 分钟 ${quality.samples} 次 · 失败 ${quality.failures}（${pct(quality.failures, quality.samples)}） · ${quality.covered ? '要求 < 5%' : '历史不足'}`)
   setText($('#n-loss'), pct(all.fail, all.n))
   setText($('#n-loss-note'), `${num(all.fail)} / ${num(all.n)} 次失败`)
   setText($('#n-p50'), all.p50 == null ? '--' : `${all.p50}`)
@@ -152,14 +154,14 @@ function render () {
     if (p[1] == null) continue
     if (p[1] >= 1500) over++; else bins[Math.floor(p[1] / 50)].value++
   }
-  const histogram = [...bins.map(b => ({ ...b, title: `${b.lo}–${b.lo + 49} ms · ${b.value} 次`, dim: b.lo >= gate.p90Ms })),
+  const histogram = [...bins.map(b => ({ ...b, title: `${b.lo}–${b.lo + 49} ms · ${b.value} 次` })),
     { label: '≥1.5s', value: over, title: `≥ 1500 ms · ${over} 次`, dim: true },
     { label: '失败', value: all.fail, title: `失败 · ${all.fail} 次`, dim: true }]
   $('#chart-net-hist').innerHTML = barChart(histogram, { height: 120, color: COLORS.ink, labelEvery: 4 })
 
   rows($('#net-recent'), points.slice(-15).reverse().map(p => [
     `${stamp(new Date(p[0]).toISOString())}`,
-    `<span class="${tone(p[1], gate.medianMs)}">${p[1] == null ? esc(p[4] || '失败') : `${p[1]} ms`}</span>
+    `<span class="${tone(p[1])}">${p[1] == null ? esc(p[4] || '失败') : `${p[1]} ms`}</span>
      <span class="text-stone-400">${p[2] ? '手动' : '自动'} · Bot ${p[3] ? '在线' : '离线'}</span>`
   ]))
 

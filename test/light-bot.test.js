@@ -2,7 +2,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { LightBot, CUSTOM_PACKETS, mergePosition, reconnectDelay, networkQuality, textOf, NETWORK_WINDOW } = require('../src/light-bot')
+const { LightBot, CUSTOM_PACKETS, mergePosition, reconnectDelay, networkGate, textOf, GATE } = require('../src/light-bot')
 
 test('LightBot accepts an isolated cooldown file', () => {
   const bot = new LightBot({ cooldownFile: 'diagnostic.cooldown' })
@@ -57,27 +57,45 @@ test('reconnectDelay gates first, then follows the exponential schedule capped a
   assert.equal(reconnectDelay(7), 60 * 60 * 1000)
 })
 
-test('networkQuality needs a full window with low loss and latency', () => {
-  const good = Array(NETWORK_WINDOW).fill(250)
-  assert.equal(networkQuality(good.slice(1)).good, false)
-  assert.equal(networkQuality(good).good, true)
-  assert.equal(networkQuality([...good.slice(2), null, null]).good, false)
-  assert.equal(networkQuality([...good.slice(1), null]).good, true)
-  assert.equal(networkQuality(Array(NETWORK_WINDOW).fill(600)).good, false)
-  assert.equal(networkQuality([...good.slice(3), 1500, 1500, 1500]).good, false)
+const history = now => Array.from({ length: 40 }, (_, i) => ({ t: now - (40 - i) * 30000 + 1, ms: 1500 }))
+
+test('gate uses the last 20 minutes, strictly below 5%, without latency limits', () => {
+  const now = Date.now(), probes = history(now)
+  assert.equal(networkGate(probes, now).ok, true)
+  probes[5].ms = null
+  assert.equal(networkGate(probes, now).ok, true) // 2.5%
+  probes[6].ms = null
+  assert.equal(networkGate(probes, now).ok, false) // exactly 5%
+  assert.equal(networkGate(probes, now + GATE.windowMs).ok, false) // stale history
+  assert.equal(networkGate(history(now).slice(-5), now).ok, false) // insufficient history
 })
 
-test('probe reconnects only after the window turns good', async () => {
-  let latency = null
-  const bot = new LightBot({ probe: async () => ({ latency }) })
+test('startup waits like a drop and reuses saved samples on the next probe', async () => {
+  const bot = new LightBot({ probe: async () => ({ latency: 200 }) })
+  bot.readCooldown = () => 0; bot.clearCooldown = () => {}
   let connects = 0
-  bot.connect = () => { connects++ }
-  bot.schedule(); clearInterval(bot.timer)
-  for (let i = 0; i < NETWORK_WINDOW; i++) await bot.probe(bot.generation)
+  bot.connect = () => { connects++; bot.gateAt = null }
+  bot.start()
+  assert.equal(bot.state.phase, 'reconnecting')
+  await bot.probe()
   assert.equal(connects, 0)
-  latency = 200
-  for (let i = 0; i < NETWORK_WINDOW - 2; i++) await bot.probe(bot.generation)
+  bot.probes = history(Date.now())
+  await bot.probe()
+  assert.equal(connects, 1)
+})
+
+test('backoff, one-hour fallback and manual logout remain respected', async () => {
+  const bot = new LightBot({ probe: async () => ({ latency: null }) })
+  let connects = 0
+  bot.connect = () => { connects++; bot.gateAt = null }
+  bot.attempt = 1; bot.schedule()
+  await bot.probe()
   assert.equal(connects, 0)
-  await bot.probe(bot.generation)
+  assert.equal(bot.state.reconnectDelayMs, 120000)
+  bot.gateAt = Date.now() - 3600001
+  await bot.probe()
+  assert.equal(connects, 1)
+  bot.schedule(); bot.stop()
+  await bot.probe()
   assert.equal(connects, 1)
 })

@@ -10,7 +10,10 @@ const {
   MAX_CONSECUTIVE_RECONNECTS,
   COOLDOWN_MS,
   STABLE_RESET_MS,
-  LIVENESS_TIMEOUT_MS
+  LIVENESS_TIMEOUT_MS,
+  networkGate,
+  GATE,
+  PROBE_INTERVAL_MS
 } = require('./light-bot')
 const { ChatStore } = require('./chat-store')
 
@@ -30,6 +33,50 @@ const CONTENT_TYPES = {
 const bot = new LightBot()
 const chatStore = new ChatStore(config.chatFile)
 const clients = new Set()
+
+// Reuse the existing probe history; the bot and web UI now share the same samples.
+const probeFile = path.resolve(__dirname, '../.minecraft-idle-bot.probes.jsonl')
+const retentionMs = 14 * 24 * 3600 * 1000
+try {
+  bot.probes = fs.readFileSync(probeFile, 'utf8').split('\n').filter(Boolean).flatMap(line => {
+    try {
+      const r = JSON.parse(line)
+      return Number.isFinite(r.t) && r.t >= Date.now() - retentionMs && (r.ms === null || Number.isFinite(r.ms)) ? [r] : []
+    } catch { return [] }
+  })
+  fs.writeFileSync(probeFile, bot.probes.map(r => JSON.stringify(r) + '\n').join(''))
+} catch (error) { if (error.code !== 'ENOENT') console.error(`[probe] load failed: ${error.message}`) }
+bot.state.network = networkGate(bot.probes)
+let compactAt = Date.now() + 86400000
+bot.on('probe', record => {
+  while (bot.probes.length && bot.probes[0].t < Date.now() - retentionMs) bot.probes.shift()
+  try {
+    if (Date.now() >= compactAt) {
+      fs.writeFileSync(probeFile, bot.probes.map(r => JSON.stringify(r) + '\n').join(''))
+      compactAt = Date.now() + 86400000
+    } else fs.appendFileSync(probeFile, JSON.stringify(record) + '\n')
+  } catch (error) { console.error(`[probe] save failed: ${error.message}`) }
+})
+const point = r => [r.t, r.ms, r.src === 'manual' ? 1 : 0, r.phase === 'play' ? 1 : 0, ...(r.err ? [r.err] : [])]
+function probeData (query) {
+  const hours = Math.min(336, Math.max(1, Number(query.get('hours')) || 24))
+  const since = Math.max(Date.now() - hours * 3600000, Number(query.get('since')) || 0)
+  const buckets = Array.from({ length: 24 }, () => ({ n: 0, fail: 0, ms: [] }))
+  if (!query.has('since')) for (const r of bot.probes) {
+    const b = buckets[new Date(r.t).getUTCHours()]
+    b.n++
+    if (r.ms == null) b.fail++; else b.ms.push(r.ms)
+  }
+  return {
+    now: Date.now(), intervalMs: PROBE_INTERVAL_MS, gate: GATE, quality: networkGate(bot.probes),
+    firstAt: bot.probes[0]?.t ?? null, total: bot.probes.length,
+    points: bot.probes.filter(r => r.t > since).map(point),
+    hourOfDayUtc: query.has('since') ? undefined : buckets.map(b => {
+      b.ms.sort((a, b) => a - b)
+      return [b.n, b.fail, b.ms.length ? b.ms[b.ms.length >> 1] : null]
+    })
+  }
+}
 
 const json = (res, status, value) => {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -73,6 +120,13 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, phase: bot.state.phase })
 
+  if (req.method === 'GET' && url.pathname === '/api/probes') return json(res, 200, probeData(query))
+  if (req.method === 'POST' && url.pathname === '/api/probes/run') {
+    bot.probe('manual').then(record => json(res, 200, { ok: true, point: point(record), quality: bot.state.network }))
+      .catch(error => json(res, 500, { ok: false, error: error.message }))
+    return
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/chat') {
     return json(res, 200, chatStore.page({
       before: query.get('before'),
@@ -105,6 +159,7 @@ const server = http.createServer((req, res) => {
         cooldownMs: COOLDOWN_MS,
         stableResetMs: STABLE_RESET_MS,
         livenessTimeoutMs: LIVENESS_TIMEOUT_MS,
+        networkGate: GATE,
         tickMs: TICK_MS
       }
     })
@@ -148,11 +203,18 @@ const server = http.createServer((req, res) => {
 
 let webPort = config.webPort
 let started = false
+let probeTimer
 function listen () { server.listen(webPort, config.webHost) }
 server.on('listening', () => {
   const address = server.address()
   console.log(`[web] http://${address.address}:${address.port}`)
-  if (!started) { started = true; bot.start() }
+  if (!started) {
+    started = true
+    bot.start()
+    const probe = () => bot.probe().catch(error => console.error(`[probe] ${error.message}`))
+    probeTimer = setInterval(probe, PROBE_INTERVAL_MS)
+    probe()
+  }
 })
 server.on('error', error => {
   if (error.code === 'EADDRINUSE' && webPort < config.webPort + 100) { webPort++; setImmediate(listen); return }
@@ -161,6 +223,6 @@ server.on('error', error => {
 })
 listen()
 
-const shutdown = () => { clearInterval(tickTimer); bot.stop(); server.close(() => process.exit(0)) }
+const shutdown = () => { clearInterval(tickTimer); clearInterval(probeTimer); bot.stop(); server.close(() => process.exit(0)) }
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)

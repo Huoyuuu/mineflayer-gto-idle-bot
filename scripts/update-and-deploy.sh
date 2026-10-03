@@ -36,14 +36,8 @@ echo "[update] deploying ${local_sha:0:7} -> ${remote_sha:0:7}"
 # Manual git pull still uses .githooks/post-merge.
 git -c core.hooksPath=/dev/null merge --ff-only "$remote_ref"
 # Static files are read from disk per request, so frontend/docs-only updates need no restart.
-# probe/ is a separate service: restart it alone so the bot keeps its Minecraft session.
 changed="$(git diff --name-only "$local_sha" "$remote_sha")"
-if ! grep -qvE '^(public/|docs/|test/|probe/)|\.md$|^\.gitignore$' <<<"$changed"; then
-  if grep -q '^probe/' <<<"$changed"; then
-    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-    systemctl --user restart minecraft-idle-bot-probe.service
-    echo "[update] probe service restarted"
-  fi
+if ! grep -qvE '^(public/|docs/|test/)|\.md$|^\.gitignore$' <<<"$changed"; then
   echo "[update] hot update ${remote_sha:0:7}: bot service not restarted"
   exit 0
 fi
