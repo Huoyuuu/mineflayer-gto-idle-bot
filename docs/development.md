@@ -212,3 +212,16 @@ failure after the 60-minute step still triggers the persisted two-hour cooldown.
 goes through the gate. Probe results are tied to `generation` and dropped after stop/manual login.
 Client `checkTimeoutInterval` is 60 s. State exposes `network`; `nextReconnectAt` is the fallback deadline.
 Tests inject `options.probe` to avoid network access.
+
+## Standalone Probe Service (2026-10-03)
+
+`probe/server.js` is a separate user service (`minecraft-idle-bot-probe.service`, 127.0.0.1:18014)
+so probing can evolve without restarting the bot. It pings every 30 s, stores
+`{t, ms, src, phase, err?}` lines in `.minecraft-idle-bot.probes.jsonl` (14-day retention), serves
+`GET /api/probes?hours=&since=` and `POST /api/probes/run`. The system nginx `port-gate.conf`
+server for 18013 has a `location /api/probes` copy of the cookie-gated block pointing at 18014.
+`update-and-deploy.sh` treats `public/ docs/ test/ probe/ *.md .gitignore` as hot: no bot restart,
+and `probe/` changes restart only the probe service. Changes to `src/`, `scripts/`, `deploy/` or
+`package*.json` still trigger a full deploy (bot reconnect); to avoid that, stop the timer and
+fast-forward manually as done for `52fe167`. Gate thresholds are duplicated in `src/light-bot.js`,
+`probe/server.js` and `public/view-status.js`.

@@ -329,3 +329,58 @@ storage bus 120 124 -47  -> HV input bus 120 123 -47
 - 发现部署脚本每次 push 都会重启服务：推送纯文档的 `3118a42` 也让 Bot 重新登录了一次。
 - `scripts/update-and-deploy.sh`：fast-forward 之后，如果改动文件全部属于 `public/`、`docs/`、`test/` 或 `*.md`，就直接退出，不调用 `deploy.sh`。`serveStatic` 每次请求都从磁盘读取，并用 mtime 生成 ETag，所以前端改动刷新页面即可生效。其他改动（`src/`、`scripts/`、`package*.json`、`deploy/`）仍然走完整部署并重启。
 - 这次提交改动了脚本本身，服务器上的旧脚本会照常重启，所以手动处理：先停 update timer，等它空闲后在服务器上执行 `merge --ff-only`（禁用 hooks），再启动 timer。Bot 进程 PID 1115804 全程没变。
+
+# 2026-10-03 持续探测服务与网络页
+
+## 需求与约束
+
+- 用户要求：加手动探测按钮；不只断线时探测，而是一直每 30 秒探测；探测结果保留历史；做一个类似“汇总”的独立页面并配图表。
+- 硬约束：不能让 Bot 断线重连。Bot 进程没有热重载，只要改 `src/` 并让它生效就必须重启进程，Minecraft 会话随之断开。
+
+## 方案
+
+把探测做成独立进程，Bot 进程完全不动：
+
+- `probe/server.js`：独立 user service `minecraft-idle-bot-probe.service`，只监听 `127.0.0.1:18014`。
+  - 每 30 秒做一次 Server List Ping（超时 5 秒），并发请求共享同一次在途探测。
+  - 每条记录 `{t, ms|null, src: auto|manual, phase, err?}` 追加到 `.minecraft-idle-bot.probes.jsonl`（已加入 gitignore）。保留 14 天，启动和每次探测时修剪。
+  - `phase` 通过本机 `/api/health` 读取 Bot 当时的状态，用来在图上标出 Bot 离线时段。
+  - `GET /api/probes?hours=&since=`：返回紧凑点 `[t, ms, manual, online, err?]`、门控阈值、最近 20 次窗口质量，以及全历史按 UTC 小时汇总的失败数和中位延迟。传 `since` 时只返回增量。
+  - `POST /api/probes/run`：手动探测一次，返回该点和最新窗口质量。
+  - 只依赖 `src/config.js`，不 require `light-bot.js`。门控阈值在这里复制了一份，注释标明与 `NETWORK_*` 保持一致。
+- nginx（系统 nginx，`sites-available/port-gate.conf` 中的 18013 server）：在 `location /` 之前插入 `location /api/probes`，原样复制 cookie 门禁和代理头，只把 `proxy_pass` 改为 18014。修改前备份为 `port-gate.conf.bak-<时间戳>`，`nginx -t` 通过后 reload，systemctl 显示 active。
+- 前端：新增“网络”标签页 `public/view-network.js`。
+  - 顶部有“立即探测”按钮、下次自动探测倒计时，以及时间范围切换：6 小时 / 24 小时 / 3 天 / 7 天 / 14 天。
+  - 四张卡片：最新延迟、重连门控（最近 20 次）、区间失败率、区间中位延迟（附 p10 / p90 / p99）。
+  - 延迟时间线：自绘 SVG，按约 2 分钟一列聚合。黑线是中位，灰带是 p10–p90，红柱是失败（高度随失败率变化），黄底是 Bot 离线，底部色条把 Bot 的门控规则在每个时刻重放一遍，显示是否达标。另有中位和 p90 两条阈值虚线。
+  - 另有四张图：逐小时失败率、延迟分布直方图（50ms 一档，超过 p90 阈值的档位用浅色，另有 ≥1.5s 和失败两档）、按小时失败率和按小时中位延迟（全部历史，换算成本地时区）。
+  - 底部列出最近 15 次探测。页面每 30 秒增量刷新。
+  - 状态页“网络门控”卡片加了“持续探测历史 →”链接，文案说明这组数据只是 Bot 断线后自己用来决定何时重连的。
+- 部署脚本：
+  - `update-and-deploy.sh` 的热更新白名单加入 `probe/` 和 `.gitignore`；改到 `probe/` 时只重启探测服务。
+  - `deploy.sh` 在完整部署时也安装、启用并重启探测服务。
+
+## 上线过程（Bot 未重启）
+
+1. 停 update timer，等它空闲。
+2. 推送 `52fe167`，在服务器上手动执行 `merge --ff-only`（禁用 hooks）。
+3. 安装探测 unit，`daemon-reload`，`enable --now` 探测服务。
+4. 修改 nginx：`nginx -t` 通过后 reload。
+5. 启动 timer。全程 Bot 主进程 PID 保持 1115804，`ActiveEnterTimestamp` 仍是 23:08:07。
+
+## 验证
+
+- 本地临时端口跑探测服务：自动和手动记录都写入 JSONL，API 输出正确。
+- 服务器上：探测服务 active，本机 18014 有数据。外网 18013 不带 cookie 访问 `/api/probes` 返回 302；带 cookie 时 GET 和 POST 都正常，`view-network.js` 和新的 `index.html` 已生效。
+- `npm run check`（新增两个文件的语法检查）和 `npm test` 16 项都通过。按要求没有做浏览器测试。
+
+## 观察
+
+- 23:22:48 Bot 因 keepalive 60 秒超时自然掉线（晚高峰，发生在本次部署之前，与部署无关），这是新门控第一次真实触发。
+- 掉线后 Bot 自己的窗口为 9 次探测、4 次失败、中位 940ms，因此按设计没有重连。兜底时间是 00:23。可以在网络页的时间线上直接看到这一段。
+
+## 未决事项
+
+- 阈值写在 `src/light-bot.js`、`probe/server.js`、`public/view-status.js` 三处，修改时要同步。
+- 探测服务与 Bot 自己的门控是两套独立探测，样本不共享。网络页展示的是持续数据，Bot 用的是它断线后自己采集的那一组。
+- 下次 Bot 因其他原因必须重启时，可以考虑让 Bot 直接读取探测服务的数据，去掉重复探测。现在为了不重启，没有动 Bot。

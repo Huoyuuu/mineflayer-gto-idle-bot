@@ -15,6 +15,8 @@
 零圆角、按钮墨水上扫）。改样式改 `app.css`，别在 HTML 里堆 Tailwind 工具类。
 图标统一 Lucide `data-lucide`，注入新 DOM 后要调 `lucide.createIcons()`。全站禁用 emoji。
 
+**探测服务**：`probe/server.js` 是独立 user service `minecraft-idle-bot-probe.service`（127.0.0.1:18014），每 30s SLP 一次并写入 `.minecraft-idle-bot.probes.jsonl`（保留 14 天）；nginx 18013 的 `/api/probes` 反代到它；前端“网络”页 `view-network.js`。改 `probe/` 只重启探测服务，不动 Bot。
+
 **部署**：只改 `public/`、`docs/`、`test/`、`*.md` 时 timer 只做 fast-forward、不重启（热更新）；其他改动才重启。
 
 **验证**：`npm test`（16 项）+ `node --check public/*.js`。
