@@ -15,5 +15,7 @@
 零圆角、按钮墨水上扫）。改样式改 `app.css`，别在 HTML 里堆 Tailwind 工具类。
 图标统一 Lucide `data-lucide`，注入新 DOM 后要调 `lucide.createIcons()`。全站禁用 emoji。
 
+**部署**：只改 `public/`、`docs/`、`test/`、`*.md` 时 timer 只做 fast-forward、不重启（热更新）；其他改动才重启。
+
 **验证**：`npm test`（16 项）+ `node --check public/*.js`。
 详细设计决策见 `docs/report.md`，接手须知见 `docs/development.md`。
