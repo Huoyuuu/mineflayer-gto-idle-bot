@@ -200,3 +200,15 @@ anywhere in the interface.
 
 `public/package.json` only marks the directory as ESM so `node --check public/*.js` parses the
 modules; it is not an installable package.
+
+## Network-Gated Reconnect (2026-10-03)
+
+After any drop, `schedule()` clears the sample window and starts a 30-second Server List Ping
+probe (`mc.ping`, 5-second timeout; no login, so no join/leave spam). `probe()` reconnects only when
+the backoff delay has elapsed and `networkQuality()` reports a full 20-sample window with at most one
+failure, median latency <= 400 ms and p90 <= 800 ms, or when the 60-minute fallback is reached.
+`reconnectDelay(0)` is now 0 (gate only); repeated login failures add the `2m..60m` schedule, and
+failure after the 60-minute step still triggers the persisted two-hour cooldown. Cooldown expiry also
+goes through the gate. Probe results are tied to `generation` and dropped after stop/manual login.
+Client `checkTimeoutInterval` is 60 s. State exposes `network`; `nextReconnectAt` is the fallback deadline.
+Tests inject `options.probe` to avoid network access.
