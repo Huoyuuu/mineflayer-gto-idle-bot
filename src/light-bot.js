@@ -25,6 +25,16 @@ const MAX_CONSECUTIVE_RECONNECTS = 3
 const COOLDOWN_MS = 2 * 60 * 60 * 1000
 const STABLE_RESET_MS = 10 * 60 * 1000
 const LIVENESS_TIMEOUT_MS = 90 * 1000
+const KEEPALIVE_TIMEOUT_MS = 60 * 1000
+// Network gate: after a drop, probe with Server List Ping (no login) and only reconnect
+// once a full sliding window is good; conservative thresholds, 60-minute fallback.
+const PROBE_INTERVAL_MS = 30 * 1000
+const PROBE_TIMEOUT_MS = 5 * 1000
+const NETWORK_WINDOW = 20
+const NETWORK_MAX_FAILURES = 1
+const NETWORK_MAX_MEDIAN_MS = 400
+const NETWORK_MAX_P90_MS = 800
+const NETWORK_FALLBACK_MS = 60 * 60 * 1000
 const COOLDOWN_FILE = path.resolve(__dirname, '../.minecraft-idle-bot.cooldown')
 const CUSTOM_PACKETS = {
   '1.20': {
@@ -39,8 +49,22 @@ const CUSTOM_PACKETS = {
 }
 
 function reconnectDelay (attempt) {
-  const index = Math.min(Math.max(0, attempt), RECONNECT_DELAYS.length - 1)
-  return RECONNECT_DELAYS[index]
+  // attempt 0 is the network gate alone; later attempts add the exponential schedule
+  if (attempt <= 0) return 0
+  return RECONNECT_DELAYS[Math.min(attempt - 1, RECONNECT_DELAYS.length - 1)]
+}
+
+// samples: latency in ms, or null for a failed probe (most recent last)
+function networkQuality (samples) {
+  const window = samples.slice(-NETWORK_WINDOW)
+  const ok = window.filter(value => value != null).sort((a, b) => a - b)
+  const pick = q => ok.length ? ok[Math.min(ok.length - 1, Math.floor(q * ok.length))] : null
+  const failures = window.length - ok.length
+  const medianMs = pick(0.5)
+  const p90Ms = pick(0.9)
+  const good = window.length >= NETWORK_WINDOW && failures <= NETWORK_MAX_FAILURES &&
+    medianMs <= NETWORK_MAX_MEDIAN_MS && p90Ms <= NETWORK_MAX_P90_MS
+  return { good, samples: window.length, failures, medianMs, p90Ms }
 }
 
 function textOf (component) {
@@ -75,6 +99,7 @@ class LightBot extends EventEmitter {
     this.timer = null
     this.loginTimer = null
     this.stableTimer = null
+    this.samples = []
     this.livenessTimer = null
     this.cooldownTimer = null
     this.cooldownUntil = null
@@ -90,7 +115,7 @@ class LightBot extends EventEmitter {
       position: null, packets: 0, chunksIgnored: 0, reconnects: 0,
       consecutiveReconnects: 0, cooldownUntil: null,
       nextReconnectAt: null, reconnectDelayMs: null, reconnectAttempt: 0,
-      lastPacketAt: null, lastError: null, sessionStartedAt: null
+      lastPacketAt: null, lastError: null, sessionStartedAt: null, network: null
     }
   }
 
@@ -110,8 +135,8 @@ class LightBot extends EventEmitter {
         this.clearCooldown()
         this.state.cooldownUntil = null
         this.state.phase = 'offline'
-        this.emit('state', this.snapshot())
-        this.start()
+        // Cooldown expiry is a reconnect too: go through the network gate.
+        this.schedule()
       }, persistedUntil - Date.now())
       console.error(`[bot] cooldown active until ${new Date(persistedUntil).toISOString()}`)
       return this
@@ -183,12 +208,13 @@ class LightBot extends EventEmitter {
     this.generation = generation
     this.state.phase = this.state.reconnects ? 'reconnecting' : 'connecting'
     this.state.nextReconnectAt = null; this.state.reconnectDelayMs = null; this.state.reconnectAttempt = 0
+    clearInterval(this.timer); this.timer = null
     this.state.lastPacketAt = null
     this.emit('state', this.snapshot())
     let client
     try {
       client = mc.createClient({ host: this.options.mcHost, port: this.options.mcPort, username: this.options.botUsername,
-        auth: 'offline', version: this.options.mcVersion, hideErrors: true, customPackets: CUSTOM_PACKETS,
+        auth: 'offline', version: this.options.mcVersion, hideErrors: true, customPackets: CUSTOM_PACKETS, checkTimeoutInterval: KEEPALIVE_TIMEOUT_MS,
         connect: connected => { connected.once('connect', () => installForge3(connected, { log: m => this.log(m) })); this.socket = net.connect({ host: this.options.mcHost, port: this.options.mcPort }); connected.setSocket(this.socket) } })
     } catch (error) { this.fail(error); return }
     this.client = client
@@ -232,7 +258,7 @@ class LightBot extends EventEmitter {
         this.enterCooldown(endReason)
         return
       }
-      if (!wasConnected && this.attempt >= RECONNECT_DELAYS.length) {
+      if (!wasConnected && this.attempt > RECONNECT_DELAYS.length) {
         this.enterCooldown(endReason, 'the 60-minute retry also failed')
         return
       }
@@ -265,15 +291,43 @@ class LightBot extends EventEmitter {
     this.addChat('system', 'bot', `已进入 ${packet.worldName || '服务器'}`)
   }
   schedule () {
-    clearTimeout(this.timer)
+    clearInterval(this.timer)
     const delay = reconnectDelay(this.attempt++)
     this.state.reconnects++
     this.state.phase = 'reconnecting'
     this.state.reconnectDelayMs = delay
     this.state.reconnectAttempt = this.attempt
-    this.state.nextReconnectAt = new Date(Date.now() + delay).toISOString()
-    this.timer = setTimeout(() => this.connect(), delay)
-    console.error(`[bot] reconnect attempt ${this.attempt} scheduled in ${delay / 60000} minutes at ${this.state.nextReconnectAt}`)
+    // Fresh window: only probes taken after this drop count toward the gate.
+    this.samples = []
+    this.state.network = networkQuality(this.samples)
+    this.gateAt = Date.now() + delay
+    this.fallbackAt = this.gateAt + NETWORK_FALLBACK_MS
+    this.state.nextReconnectAt = new Date(this.fallbackAt).toISOString()
+    const generation = this.generation
+    this.timer = setInterval(() => this.probe(generation), PROBE_INTERVAL_MS)
+    console.error(`[bot] reconnect attempt ${this.attempt}: wait ${delay / 60000} minutes, then reconnect once network is good (fallback at ${this.state.nextReconnectAt})`)
+    this.emit('state', this.snapshot())
+  }
+  async probe (generation) {
+    if (this.probing) return
+    this.probing = true
+    let latency = null
+    try {
+      const ping = this.options.probe || (() => mc.ping({ host: this.options.mcHost, port: this.options.mcPort, version: this.options.mcVersion, closeTimeout: PROBE_TIMEOUT_MS, noPongTimeout: PROBE_TIMEOUT_MS }))
+      const result = await ping()
+      latency = Number.isFinite(result?.latency) ? result.latency : null
+    } catch {} finally { this.probing = false }
+    // Ignore results that arrive after stop(), a manual login, or a new drop.
+    if (this.generation !== generation || this.client || this.stopping) return
+    this.samples.push(latency)
+    if (this.samples.length > NETWORK_WINDOW) this.samples.shift()
+    const quality = this.state.network = networkQuality(this.samples)
+    const now = Date.now()
+    if (now >= this.gateAt && (quality.good || now >= this.fallbackAt)) {
+      console.error(`[bot] ${quality.good ? 'network good' : 'network fallback reached'} (median ${quality.medianMs}ms, p90 ${quality.p90Ms}ms, ${quality.failures}/${quality.samples} failed); reconnecting`)
+      this.connect()
+      return
+    }
     this.emit('state', this.snapshot())
   }
   fail (error) { this.state.lastError = error?.message || String(error); if (this.options.debug) console.error(`[bot] ${this.state.lastError}`); this.emit('state', this.snapshot()) }
@@ -285,10 +339,12 @@ module.exports = {
   CUSTOM_PACKETS,
   mergePosition,
   reconnectDelay,
+  networkQuality,
   textOf,
   RECONNECT_DELAYS,
   MAX_CONSECUTIVE_RECONNECTS,
   COOLDOWN_MS,
   STABLE_RESET_MS,
-  LIVENESS_TIMEOUT_MS
+  LIVENESS_TIMEOUT_MS,
+  NETWORK_WINDOW
 }

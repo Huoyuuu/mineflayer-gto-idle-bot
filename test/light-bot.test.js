@@ -2,7 +2,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { LightBot, CUSTOM_PACKETS, mergePosition, reconnectDelay, textOf } = require('../src/light-bot')
+const { LightBot, CUSTOM_PACKETS, mergePosition, reconnectDelay, networkQuality, textOf, NETWORK_WINDOW } = require('../src/light-bot')
 
 test('LightBot accepts an isolated cooldown file', () => {
   const bot = new LightBot({ cooldownFile: 'diagnostic.cooldown' })
@@ -49,10 +49,35 @@ test('custom protocol skips Forge recipe payloads the idle bot does not use', as
   assert.equal(parsed.data.params.data.toString('hex'), '010203')
 })
 
-test('reconnectDelay uses the requested exponential schedule and caps at 60 minutes', () => {
+test('reconnectDelay gates first, then follows the exponential schedule capped at 60 minutes', () => {
   assert.deepEqual(
-    [0, 1, 2, 3, 4, 5].map(reconnectDelay),
-    [2, 4, 8, 16, 32, 60].map(minutes => minutes * 60 * 1000)
+    [0, 1, 2, 3, 4, 5, 6].map(reconnectDelay),
+    [0, 2, 4, 8, 16, 32, 60].map(minutes => minutes * 60 * 1000)
   )
-  assert.equal(reconnectDelay(6), 60 * 60 * 1000)
+  assert.equal(reconnectDelay(7), 60 * 60 * 1000)
+})
+
+test('networkQuality needs a full window with low loss and latency', () => {
+  const good = Array(NETWORK_WINDOW).fill(250)
+  assert.equal(networkQuality(good.slice(1)).good, false)
+  assert.equal(networkQuality(good).good, true)
+  assert.equal(networkQuality([...good.slice(2), null, null]).good, false)
+  assert.equal(networkQuality([...good.slice(1), null]).good, true)
+  assert.equal(networkQuality(Array(NETWORK_WINDOW).fill(600)).good, false)
+  assert.equal(networkQuality([...good.slice(3), 1500, 1500, 1500]).good, false)
+})
+
+test('probe reconnects only after the window turns good', async () => {
+  let latency = null
+  const bot = new LightBot({ probe: async () => ({ latency }) })
+  let connects = 0
+  bot.connect = () => { connects++ }
+  bot.schedule(); clearInterval(bot.timer)
+  for (let i = 0; i < NETWORK_WINDOW; i++) await bot.probe(bot.generation)
+  assert.equal(connects, 0)
+  latency = 200
+  for (let i = 0; i < NETWORK_WINDOW - 2; i++) await bot.probe(bot.generation)
+  assert.equal(connects, 0)
+  await bot.probe(bot.generation)
+  assert.equal(connects, 1)
 })

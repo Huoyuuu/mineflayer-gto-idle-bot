@@ -14,7 +14,7 @@ const PHASE_TEXT = {
   cooldown: '冷却中'
 }
 
-const LADDER_FALLBACK = [2, 4, 8, 16, 32, 60].map(minutes => minutes * 60 * 1000)
+const LADDER_FALLBACK = [0, 2, 4, 8, 16, 32, 60].map(minutes => minutes * 60 * 1000)
 
 let limits = { reconnectDelays: LADDER_FALLBACK, maxConsecutiveReconnects: 3, livenessTimeoutMs: 90000 }
 let ticker = null
@@ -29,6 +29,11 @@ function dotClass (state) {
   return 'dot'
 }
 
+function netText (n) {
+  if (!n) return '探测中'
+  return `${n.samples} 次探测，失败 ${n.failures}，中位 ${n.medianMs ?? '--'}ms，p90 ${n.p90Ms ?? '--'}ms${n.good ? '，已达标' : ''}`
+}
+
 function heroNote (state, now) {
   if (state.phase === 'play') {
     const idle = state.lastPacketAt ? now - Date.parse(state.lastPacketAt) : 0
@@ -36,7 +41,7 @@ function heroNote (state, now) {
     return `${state.username} 在 ${state.world || '服务器'}`
   }
   if (state.phase === 'cooldown') return '连续掉线过多，服务已进入两小时保护冷却'
-  if (state.phase === 'reconnecting') return `第 ${state.reconnectAttempt || 1} 次退避重连等待中`
+  if (state.phase === 'reconnecting') return `第 ${state.reconnectAttempt || 1} 次重连：等待网络达标（${netText(state.network)}）`
   if (state.phase === 'connecting') return '正在完成 Forge 登录握手'
   return state.lastError ? `已离线：${state.lastError}` : '尚未连接'
 }
@@ -76,7 +81,7 @@ function renderLadder (state) {
       : done
         ? 'border-amber-300 bg-amber-100 text-amber-700'
         : 'border-stone-200 bg-white text-stone-400'
-    return `<span class="num inline-flex h-6 items-center border ${style} px-2 text-[11px]">${delay / 60000}m</span>`
+    return `<span class="num inline-flex h-6 items-center border ${style} px-2 text-[11px]">${delay ? `${delay / 60000}m` : '网络'}</span>`
   }).join('')
 
   const max = limits.maxConsecutiveReconnects ?? 3
@@ -108,11 +113,11 @@ function renderAlert (state, now) {
     setText($('#alert-detail'),
       `将在 ${stamp(state.cooldownUntil)} 结束后自动重新登录。冷却由持久化文件保存，重启服务不会跳过。`)
   } else {
-    const total = state.reconnectDelayMs ? `${state.reconnectDelayMs / 60000} 分钟` : '--'
+    const total = state.reconnectDelayMs ? `${state.reconnectDelayMs / 60000} 分钟` : '0 分钟'
     const ladder = (limits.reconnectDelays || LADDER_FALLBACK).length
     setText($('#alert-title'), `等待第 ${state.reconnectAttempt || 1} / ${ladder} 次重连`)
     setText($('#alert-detail'),
-      `本次退避 ${total}，预计 ${stamp(state.nextReconnectAt)} 发起。${state.lastError ? `上次失败：${state.lastError}` : ''}`)
+      `先等待 ${total}，之后网络达标即重连，最迟 ${stamp(state.nextReconnectAt)} 兜底。网络：${netText(state.network)}。${state.lastError ? `上次失败：${state.lastError}` : ''}`)
   }
   renderLadder(state)
 }
@@ -161,6 +166,7 @@ function renderCards (state, now) {
     ['累计重连', num(state.reconnects)],
     ['连续掉线', `${state.consecutiveReconnects || 0} / ${(limits.maxConsecutiveReconnects ?? 3) + 1}`],
     ['当前退避', state.reconnectDelayMs ? `${state.reconnectDelayMs / 60000} 分钟` : '--'],
+    ['网络门控', state.phase === 'reconnecting' ? netText(state.network) : '--'],
     ['下次重连', state.nextReconnectAt ? `${stamp(state.nextReconnectAt)}<br><span class="text-stone-400">${countdown(Date.parse(state.nextReconnectAt) - now)} 后</span>` : '--'],
     ['冷却截止', state.cooldownUntil ? stamp(state.cooldownUntil) : '--']
   ])
