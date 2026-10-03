@@ -108,4 +108,4 @@ setTimeout(() => {
   if (!playReached) finish('login-failed', 5, bot.snapshot().lastError || `play not reached within ${loginTimeoutMs} ms`)
 }, loginTimeoutMs)
 
-bot.start()
+bot.connect() // Explicit one-shot login diagnostic; not the daemon's startup path.

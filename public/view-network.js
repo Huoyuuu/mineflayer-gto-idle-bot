@@ -1,4 +1,4 @@
-// Network view: continuous Server List Ping history from the standalone probe service.
+// Network view: continuous Server List Ping history shared with the bot's reconnect gate.
 
 import { $, $$, esc, num, setText, rows, stamp, relative, countdown, barChart, hourLabel, dayKey, clock } from './lib.js'
 import { postJson } from './store.js'

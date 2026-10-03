@@ -1,41 +1,25 @@
 # Minecraft Idle Bot
 
-一个面向 Minecraft 1.20.1 Forge 服务器的极简挂机客户端。它直接使用
-`minecraft-protocol`，不加载 Mineflayer 世界插件，不解析或缓存区块、方块、实体、
-背包、物理和资源包。网页仅包含 Bot 自身状态与聊天。
+面向 Minecraft 1.20.1 Forge 的轻量挂机客户端，使用 `minecraft-protocol`，不加载世界、实体、背包或物理插件。一个 Node.js 进程提供 Bot、网页控制台、聊天存储和持续网络探测。
 
-## 启动
+## 使用
 
 需要 Node.js 22.12+：
 
-```powershell
-Copy-Item .env.example .env
-# 编辑 .env 中的 BOT_USERNAME、MC_HOST、MC_PORT
+```bash
+cp .env.example .env
+# 在 .env 中设置 BOT_USERNAME、MC_HOST、MC_PORT 等
 npm ci
-npm test
 npm start
 ```
 
-打开终端打印的地址。若 `WEB_PORT` 被占用，会自动使用后续空闲端口。
+网页包含状态、对话、汇总和网络四个页面。网络页支持手动探测、历史查询和图表。
 
-## 线上部署
+启动等同于刚掉线：读取已有探测历史，进入重连等待，不直接登录。每 30 秒探测一次，最近 20 分钟失败率严格低于 5% 才提前重连；保留一小时兜底、指数退避和两小时保护冷却。
 
-服务器首次部署时执行一次 `scripts/deploy.sh`。它会安装并启用 user systemd service 和
-每分钟运行的更新 timer。之后 push 到 `server-live` 分支时，服务器会自动 fast-forward、
-安装生产依赖并重启服务；tracked 文件有本地修改或分支发生分叉时会拒绝自动覆盖。
+项目结构、配置、接口和部署方式见 [项目介绍](docs/README.md)。
 
 ```bash
-systemctl --user status minecraft-idle-bot-update.timer
-journalctl --user -u minecraft-idle-bot-update.service -n 50
+npm test
+npm run check
 ```
-
-## 资源边界
-
-服务器发来的区块包仍必须经过底层协议解压和反序列化，但本项目不注册世界处理器，
-也不会复制、解码或持久保存区块。`VIEW_DISTANCE=2` 用于请求尽可能小的服务端视距。
-运行时唯一直接依赖是 `minecraft-protocol`。
-
-## 配置
-
-真实连接信息只放在被 Git 忽略的 `.env` 中。默认网页只监听 `127.0.0.1`；聊天接口
-没有登录鉴权，不要直接暴露到公网。
