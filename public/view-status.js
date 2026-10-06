@@ -14,7 +14,7 @@ const PHASE_TEXT = {
   cooldown: '冷却中'
 }
 
-const LADDER_FALLBACK = [0, 2, 4, 8, 16, 32, 60].map(minutes => minutes * 60 * 1000)
+const LADDER_FALLBACK = [2, 2, 4, 8, 16, 32, 60].map(minutes => minutes * 60 * 1000)
 
 let limits = { reconnectDelays: LADDER_FALLBACK, maxConsecutiveReconnects: 3, livenessTimeoutMs: 90000 }
 let ticker = null

@@ -46,9 +46,8 @@ const CUSTOM_PACKETS = {
 }
 
 function reconnectDelay (attempt) {
-  // attempt 0 is the network gate alone; later attempts add the exponential schedule
-  if (attempt <= 0) return 0
-  return RECONNECT_DELAYS[Math.min(attempt - 1, RECONNECT_DELAYS.length - 1)]
+  // Every wait includes at least 2 minutes; failed logins retain the exponential schedule.
+  return RECONNECT_DELAYS[Math.min(Math.max(attempt - 1, 0), RECONNECT_DELAYS.length - 1)]
 }
 
 // probes: [{ t, ms | null }] oldest first

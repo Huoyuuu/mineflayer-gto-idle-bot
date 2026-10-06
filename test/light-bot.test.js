@@ -49,10 +49,10 @@ test('custom protocol skips Forge recipe payloads the idle bot does not use', as
   assert.equal(parsed.data.params.data.toString('hex'), '010203')
 })
 
-test('reconnectDelay gates first, then follows the exponential schedule capped at 60 minutes', () => {
+test('reconnectDelay always waits at least 2 minutes, with failed logins capped at 60 minutes', () => {
   assert.deepEqual(
     [0, 1, 2, 3, 4, 5, 6].map(reconnectDelay),
-    [0, 2, 4, 8, 16, 32, 60].map(minutes => minutes * 60 * 1000)
+    [2, 2, 4, 8, 16, 32, 60].map(minutes => minutes * 60 * 1000)
   )
   assert.equal(reconnectDelay(7), 60 * 60 * 1000)
 })
@@ -71,7 +71,8 @@ test('gate uses the last 20 minutes, strictly below 5%, without latency limits',
   assert.equal(networkGate([{ t: now - 86400000, ms: 200 }, ...history(now).slice(-30)], now).ok, false) // an old record cannot hide a gap
 })
 
-test('startup waits like a drop and reuses saved samples on the next probe', async () => {
+test('startup waits like a drop and reuses saved samples on the next probe', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
   const bot = new LightBot({ probe: async () => ({ latency: 200 }) })
   bot.readCooldown = () => 0; bot.clearCooldown = () => {}
   let connects = 0
@@ -82,7 +83,42 @@ test('startup waits like a drop and reuses saved samples on the next probe', asy
   assert.equal(connects, 0)
   bot.probes = history(Date.now())
   await bot.probe()
+  assert.equal(connects, 0)
+  assert.equal(bot.state.reconnectDelayMs, 120000)
+  t.mock.timers.tick(120000)
+  bot.probes = history(Date.now())
+  await bot.probe()
   assert.equal(connects, 1)
+})
+
+test('each ended session waits 2 minutes even when one failed probe leaves the gate below 5%', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: Date.now() })
+  const EventEmitter = require('node:events')
+  const createClient = t.mock.method(require('minecraft-protocol'), 'createClient', () => {
+    const client = new EventEmitter()
+    client.write = () => {}
+    client.end = reason => client.emit('end', reason)
+    return client
+  })
+  const bot = new LightBot({ probe: async () => ({ latency: null }) })
+  t.after(() => bot.stop())
+  bot.connect()
+  for (let session = 1; session <= 2; session++) {
+    bot.client.emit('login', { entityId: 1 })
+    bot.client.emit('end', 'socket closed')
+    bot.probes = history(Date.now())
+    await bot.probe()
+    assert.equal(bot.state.network.ok, true)
+    assert.equal(createClient.mock.callCount(), session)
+    assert.equal(bot.state.reconnectDelayMs, 120000)
+    t.mock.timers.tick(119999)
+    bot.probes = history(Date.now())
+    await bot.probe()
+    assert.equal(createClient.mock.callCount(), session)
+    t.mock.timers.tick(1)
+    await bot.probe()
+    assert.equal(createClient.mock.callCount(), session + 1)
+  }
 })
 
 test('backoff, one-hour fallback and manual logout remain respected', async () => {

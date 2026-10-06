@@ -154,7 +154,7 @@ const server = http.createServer((req, res) => {
       chat: chatStore.stats(),
       state: bot.snapshot(),
       limits: {
-        reconnectDelays: [0, ...RECONNECT_DELAYS],
+        reconnectDelays: [RECONNECT_DELAYS[0], ...RECONNECT_DELAYS],
         maxConsecutiveReconnects: MAX_CONSECUTIVE_RECONNECTS,
         cooldownMs: COOLDOWN_MS,
         stableResetMs: STABLE_RESET_MS,
